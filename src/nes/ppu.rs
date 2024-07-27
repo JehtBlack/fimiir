@@ -1045,6 +1045,7 @@ impl Ppu {
                 if self.scanline >= 261 {
                     self.scanline = -1;
                     self.frame_complete = true;
+                    self.num_cycles_to_complete_this_tick = 0;
                 }
             }
 

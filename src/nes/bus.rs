@@ -56,8 +56,22 @@ impl Bus {
         self.dma_transfer
     }
 
-    pub fn dma_transfer(&mut self) {
-        todo!()
+    pub fn dma_transfer(&mut self, system_cycle: usize) {
+        if self.dma_dummy {
+            self.dma_dummy = system_cycle % 2 == 0;
+        } else {
+            if system_cycle % 2 == 0 {
+                self.dma_data =
+                    self.read_byte(((self.dma_page as u16) << 8) | self.dma_addr as u16);
+            } else {
+                self.ppu.write_oam(self.dma_addr, self.dma_data);
+                self.dma_addr = self.dma_addr.wrapping_add(1);
+                if self.dma_addr == 0x00 {
+                    self.dma_transfer = false;
+                    self.dma_dummy = true;
+                }
+            }
+        }
     }
 
     pub fn read_byte(&mut self, addr: u16) -> u8 {
@@ -76,6 +90,11 @@ impl Bus {
             false => match addr {
                 RAM_START..=RAM_END => self.cpu_ram[(addr & 0x07FF) as usize] = data,
                 PPU_START..=PPU_END => self.ppu.write_byte(addr & 0x0007, data),
+                OAM_DMA => {
+                    self.dma_page = data;
+                    self.dma_addr = 0x00;
+                    self.dma_transfer = true;
+                }
                 _ => {}
             },
             _ => {}

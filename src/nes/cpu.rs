@@ -134,7 +134,7 @@ impl Cpu {
             if cpu_should_tick {
                 // DMA transfer blocks the CPU for the duration of the transfer
                 if self.bus.dma_transfer_active() {
-                    self.bus.dma_transfer();
+                    self.bus.dma_transfer(cycle);
                 } else {
                     self.tick();
                 }

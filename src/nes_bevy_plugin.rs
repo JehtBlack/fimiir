@@ -152,60 +152,56 @@ fn setup_nes(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let mut nes = Box::new(Nes::new(&NES_TEST));
     nes.reset();
 
-    // commands.spawn((
-    //     NesEmulator {
-    //         nes,
-    //         screen_target: nes_screen_handle.clone(),
-    //     },
-    //     SpriteBundle {
-    //         sprite: Sprite {
-    //             // custom_size: Some(Vec2::new(1280.0, 720.0)),
-    //             // rect: Some(Rect {
-    //             //     min: Vec2::new(0.0, 0.0),
-    //             //     max: Vec2::new(NES_SCREEN_WIDTH as f32, NES_SCREEN_HEIGHT as f32),
-    //             // }),
-    //             custom_size: Some(Vec2::new(NES_SCREEN_WIDTH as f32, NES_SCREEN_HEIGHT as f32)),
-    //             ..default()
-    //         },
-    //         transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
-    //         texture: nes_screen_handle,
-    //         ..Default::default()
-    //     },
-    // ));
-
     commands
         .spawn(NodeBundle {
             style: Style {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                padding: UiRect::all(Val::Px(10.0)),
                 justify_content: JustifyContent::SpaceBetween,
+                row_gap: Val::Px(10.0),
                 ..default()
             },
             ..default()
         })
         .with_children(|parent| {
-            parent.spawn((
-                NodeBundle {
+            parent
+                .spawn(NodeBundle {
                     style: Style {
                         width: Val::Px(NES_SCREEN_WIDTH as f32 * 2.0),
                         height: Val::Px(NES_SCREEN_WIDTH as f32 * 2.0),
                         margin: UiRect::all(Val::Px(5.0)),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
                         ..default()
                     },
                     ..default()
-                },
-                NesEmulator {
-                    nes,
-                    screen_target: nes_screen_handle.clone(),
-                },
-                NesDebugExtensions {
-                    pattern_table_visualizations: [
-                        pattern_table_visualizations[0].clone(),
-                        pattern_table_visualizations[1].clone(),
-                    ],
-                },
-                UiImage::new(nes_screen_handle),
-            ));
+                })
+                .with_children(|parent| {
+                    parent.spawn((
+                        NesEmulator {
+                            nes,
+                            screen_target: nes_screen_handle.clone(),
+                        },
+                        NesDebugExtensions {
+                            pattern_table_visualizations: [
+                                pattern_table_visualizations[0].clone(),
+                                pattern_table_visualizations[1].clone(),
+                            ],
+                        },
+                        ImageBundle {
+                            style: Style {
+                                width: Val::Px(NES_SCREEN_WIDTH as f32 * 2.0),
+                                height: Val::Px(NES_SCREEN_HEIGHT as f32 * 2.0),
+                                ..default()
+                            },
+                            image: UiImage::new(nes_screen_handle.clone()),
+                            ..default()
+                        },
+                    ));
+                });
 
             parent
                 .spawn(NodeBundle {
@@ -219,31 +215,27 @@ fn setup_nes(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                     ..default()
                 })
                 .with_children(|parent| {
-                    parent.spawn((
-                        NodeBundle {
-                            style: Style {
-                                width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 2.0),
-                                height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
-                                margin: UiRect::all(Val::Px(5.0)),
-                                ..default()
-                            },
+                    parent.spawn(ImageBundle {
+                        style: Style {
+                            width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 2.0),
+                            height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
+                            margin: UiRect::all(Val::Px(5.0)),
                             ..default()
                         },
-                        UiImage::new(pattern_table_visualizations[0].clone()),
-                    ));
+                        image: UiImage::new(pattern_table_visualizations[0].clone()),
+                        ..default()
+                    });
 
-                    parent.spawn((
-                        NodeBundle {
-                            style: Style {
-                                width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 2.0),
-                                height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
-                                margin: UiRect::all(Val::Px(5.0)),
-                                ..default()
-                            },
+                    parent.spawn(ImageBundle {
+                        style: Style {
+                            width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 2.0),
+                            height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
+                            margin: UiRect::all(Val::Px(5.0)),
                             ..default()
                         },
-                        UiImage::new(pattern_table_visualizations[1].clone()),
-                    ));
+                        image: UiImage::new(pattern_table_visualizations[1].clone()),
+                        ..default()
+                    });
                 });
         });
 }
