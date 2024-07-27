@@ -1,0 +1,5 @@
+/target
+# DO NOT REDISTRIBUTE ROM FILES
+*.nes 
+# Except for NesTest
+!nestest.nes 
