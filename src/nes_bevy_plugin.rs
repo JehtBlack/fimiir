@@ -27,7 +27,15 @@ pub struct NesPlugin;
 impl Plugin for NesPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup_nes)
-            .add_systems(Update, nes_frame)
+            .add_systems(
+                Update,
+                (
+                    nes_frame,
+                    nes_debugging_pattern_table_visualization,
+                    nes_debuggin_memory_visualization,
+                )
+                    .chain(),
+            )
             .add_plugins(EmulatorScreenPlugin);
     }
 }
@@ -115,9 +123,21 @@ struct NesDebugExtensions {
     pattern_table_visualizations: [Handle<Image>; NUM_NES_PATTERN_TABLES],
 }
 
-fn setup_nes(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+#[derive(Component)]
+struct MemoryDebugging;
+
+#[derive(Component)]
+struct CpuStatusDebugging;
+
+fn setup_nes(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    asset_server: Res<AssetServer>,
+) {
+    let font = asset_server.load("fonts/nintendo-nes-font.ttf");
+
     // need to create a texture asset for the NES screen
-    let buffer = [0xFF as u8; NES_SCREEN_WIDTH * NES_SCREEN_HEIGHT * 4];
+    let buffer = [0xFFu8; NES_SCREEN_WIDTH * NES_SCREEN_HEIGHT * 4];
     let nes_screen = Image::new_fill(
         Extent3d {
             width: NES_SCREEN_WIDTH as u32,
@@ -131,7 +151,7 @@ fn setup_nes(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     );
     let nes_screen_handle = images.add(nes_screen);
 
-    let pattern_buffer = [0xFF as u8; NES_PATTERN_TABLE_WIDTH * NES_PATTERN_TABLE_HEIGHT * 4];
+    let pattern_buffer = [0xFFu8; NES_PATTERN_TABLE_WIDTH * NES_PATTERN_TABLE_HEIGHT * 4];
     let pattern_table_visualizations = (0..NUM_NES_PATTERN_TABLES)
         .into_iter()
         .map(|_| {
@@ -152,6 +172,20 @@ fn setup_nes(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let mut nes = Box::new(Nes::new(&NES_TEST));
     nes.reset();
 
+    commands.spawn((
+        NesEmulator {
+            nes,
+            screen_target: nes_screen_handle.clone(),
+        },
+        NesDebugExtensions {
+            pattern_table_visualizations: [
+                pattern_table_visualizations[0].clone(),
+                pattern_table_visualizations[1].clone(),
+            ],
+        },
+    ));
+
+    // UI setup
     commands
         .spawn(NodeBundle {
             style: Style {
@@ -180,74 +214,88 @@ fn setup_nes(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                     ..default()
                 })
                 .with_children(|parent| {
-                    parent.spawn((
-                        NesEmulator {
-                            nes,
-                            screen_target: nes_screen_handle.clone(),
-                        },
-                        NesDebugExtensions {
-                            pattern_table_visualizations: [
-                                pattern_table_visualizations[0].clone(),
-                                pattern_table_visualizations[1].clone(),
-                            ],
-                        },
-                        ImageBundle {
-                            style: Style {
-                                width: Val::Px(NES_SCREEN_WIDTH as f32 * 2.0),
-                                height: Val::Px(NES_SCREEN_HEIGHT as f32 * 2.0),
-                                ..default()
-                            },
-                            image: UiImage::new(nes_screen_handle.clone()),
+                    parent.spawn((ImageBundle {
+                        style: Style {
+                            width: Val::Px(NES_SCREEN_WIDTH as f32 * 2.0),
+                            height: Val::Px(NES_SCREEN_HEIGHT as f32 * 2.0),
                             ..default()
                         },
-                    ));
+                        image: UiImage::new(nes_screen_handle.clone()),
+                        ..default()
+                    },));
                 });
 
             parent
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 4.0),
-                        height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
-                        margin: UiRect::all(Val::Px(5.0)),
-                        flex_direction: FlexDirection::Row,
+                        flex_direction: FlexDirection::Column,
                         ..default()
                     },
                     ..default()
                 })
                 .with_children(|parent| {
-                    parent.spawn(ImageBundle {
-                        style: Style {
-                            width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 2.0),
-                            height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
-                            margin: UiRect::all(Val::Px(5.0)),
+                    parent.spawn((
+                        TextBundle {
+                            text: Text::from_section(
+                                "No memory fetched for visualization yet.",
+                                TextStyle {
+                                    font: font.clone(),
+                                    font_size: 8.0,
+                                    color: Color::WHITE,
+                                    ..default()
+                                },
+                            ),
                             ..default()
                         },
-                        image: UiImage::new(pattern_table_visualizations[0].clone()),
-                        ..default()
-                    });
+                        MemoryDebugging,
+                    ));
 
-                    parent.spawn(ImageBundle {
-                        style: Style {
-                            width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 2.0),
-                            height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
-                            margin: UiRect::all(Val::Px(5.0)),
+                    parent
+                        .spawn(NodeBundle {
+                            style: Style {
+                                width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 4.0),
+                                height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
+                                margin: UiRect::all(Val::Px(5.0)),
+                                flex_direction: FlexDirection::Row,
+                                ..default()
+                            },
                             ..default()
-                        },
-                        image: UiImage::new(pattern_table_visualizations[1].clone()),
-                        ..default()
-                    });
+                        })
+                        .with_children(|parent| {
+                            parent.spawn(ImageBundle {
+                                style: Style {
+                                    width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 2.0),
+                                    height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
+                                    margin: UiRect::all(Val::Px(5.0)),
+                                    ..default()
+                                },
+                                image: UiImage::new(pattern_table_visualizations[0].clone()),
+                                ..default()
+                            });
+
+                            parent.spawn(ImageBundle {
+                                style: Style {
+                                    width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 2.0),
+                                    height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
+                                    margin: UiRect::all(Val::Px(5.0)),
+                                    ..default()
+                                },
+                                image: UiImage::new(pattern_table_visualizations[1].clone()),
+                                ..default()
+                            });
+                        });
                 });
         });
 }
 
 fn nes_frame(
-    mut query: Query<(&mut NesEmulator, &NesDebugExtensions)>,
+    mut query: Query<&mut NesEmulator>,
     screen_sender: ResMut<EmulatorScreenSender>,
     render_device: Res<RenderDevice>,
 ) {
     // need to prepare an ImageCopyBuffer during the frame, once the frame is complete
     // the buffer will be used to update the texture asset
-    for (mut nes_emulator, nes_debug_ext) in query.iter_mut() {
+    for mut nes_emulator in query.iter_mut() {
         let mut nes_screen_data = [0 as u8; NES_SCREEN_WIDTH * NES_SCREEN_HEIGHT * 4];
         nes_emulator.nes.frame(|x, y, r, g, b| {
             let i = (y * NES_SCREEN_WIDTH + x) * 4;
@@ -274,7 +322,15 @@ fn nes_frame(
                 nes_emulator.screen_target.clone(),
             ))
             .unwrap();
+    }
+}
 
+fn nes_debugging_pattern_table_visualization(
+    mut query: Query<(&mut NesEmulator, &NesDebugExtensions)>,
+    screen_sender: ResMut<EmulatorScreenSender>,
+    render_device: Res<RenderDevice>,
+) {
+    for (mut nes_emulator, nes_debug_ext) in query.iter_mut() {
         for i in 0..NUM_NES_PATTERN_TABLES {
             let mut pattern_table_data =
                 [0 as u8; NES_PATTERN_TABLE_WIDTH * NES_PATTERN_TABLE_HEIGHT * 4];
@@ -306,6 +362,40 @@ fn nes_frame(
                     nes_debug_ext.pattern_table_visualizations[i].clone(),
                 ))
                 .unwrap();
+        }
+    }
+}
+
+fn nes_debuggin_memory_visualization(
+    mut nes_query: Query<&mut NesEmulator>,
+    mut memory_text_target: Query<&mut Text, With<MemoryDebugging>>,
+) {
+    for mut nes_emulator in nes_query.iter_mut() {
+        let mut memory_text = String::new();
+        let memory_page = 0x0000u16;
+
+        let memory_cols = 16u16;
+        let memory_rows = 256 / memory_cols;
+        for row in 0..memory_rows {
+            memory_text.push_str(format!("${:04X}: ", memory_page + row * memory_cols).as_str());
+            memory_text.push_str({
+                let mem = (0..memory_cols)
+                    .map(|col| {
+                        format!(
+                            "{:02X}",
+                            nes_emulator
+                                .nes
+                                .read_byte(memory_page + row * memory_cols + col)
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                mem.join(" ").as_str()
+            });
+            memory_text.push('\n');
+        }
+
+        for mut text in memory_text_target.iter_mut() {
+            text.sections[0].value = memory_text.clone();
         }
     }
 }

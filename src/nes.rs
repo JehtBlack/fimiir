@@ -30,6 +30,10 @@ impl Nes {
         self.system_cycle_counter = 0;
     }
 
+    pub fn read_byte(&mut self, addr: u16) -> u8 {
+        self.cpu.read_byte(addr)
+    }
+
     pub fn fill_buffer_with_pattern_table<F>(
         &mut self,
         table_index: usize,
