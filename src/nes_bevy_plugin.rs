@@ -1,3 +1,5 @@
+use std::default;
+
 use crate::nes::{
     NES_PATTERN_TABLE_HEIGHT, NES_PATTERN_TABLE_WIDTH, NES_SCREEN_HEIGHT, NES_SCREEN_WIDTH,
     NUM_NES_PATTERN_TABLES,
@@ -17,6 +19,7 @@ use bevy::{
         texture::BevyDefault,
         RenderApp,
     },
+    text::BreakLineOn,
 };
 use crossbeam_channel::{Receiver, Sender};
 
@@ -32,7 +35,9 @@ impl Plugin for NesPlugin {
                 (
                     nes_frame,
                     nes_debugging_pattern_table_visualization,
-                    nes_debuggin_memory_visualization,
+                    nes_debugging_memory_visualization,
+                    nes_debugging_cpu_status_visualization,
+                    nes_debugging_cpu_instructions_visualization,
                 )
                     .chain(),
             )
@@ -124,17 +129,36 @@ struct NesDebugExtensions {
 }
 
 #[derive(Component)]
-struct MemoryDebugging;
+struct MemoryDebugView;
 
 #[derive(Component)]
-struct CpuStatusDebugging;
+struct CpuStatusDebugView;
+
+#[derive(Default)]
+enum CodeOffset {
+    #[default]
+    Centered,
+    OffsetFromCenter(i32),
+    OffsetFromTop(usize),
+    OffsetFromBottom(usize),
+}
+
+#[derive(Component)]
+struct CodeDebugView {
+    max_visible_instructions: usize,
+    active_instruction_position: CodeOffset,
+}
 
 fn setup_nes(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     asset_server: Res<AssetServer>,
 ) {
-    let font = asset_server.load("fonts/nintendo-nes-font.ttf");
+    const CHOSEN_FONT_INDEX: usize = 1;
+    let fonts = [
+        asset_server.load("fonts/PressStart2P-vaV7.ttf"),
+        asset_server.load("fonts/Emulogic-zrEw.ttf"),
+    ];
 
     // need to create a texture asset for the NES screen
     let buffer = [0xFFu8; NES_SCREEN_WIDTH * NES_SCREEN_HEIGHT * 4];
@@ -194,7 +218,7 @@ fn setup_nes(
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
                 padding: UiRect::all(Val::Px(10.0)),
-                justify_content: JustifyContent::SpaceBetween,
+                justify_content: JustifyContent::Center,
                 row_gap: Val::Px(10.0),
                 ..default()
             },
@@ -229,32 +253,214 @@ fn setup_nes(
                 .spawn(NodeBundle {
                     style: Style {
                         flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
                         ..default()
                     },
                     ..default()
                 })
                 .with_children(|parent| {
-                    parent.spawn((
-                        TextBundle {
-                            text: Text::from_section(
-                                "No memory fetched for visualization yet.",
-                                TextStyle {
-                                    font: font.clone(),
-                                    font_size: 8.0,
-                                    color: Color::WHITE,
-                                    ..default()
-                                },
-                            ),
+                    parent
+                        .spawn(NodeBundle {
+                            style: Style {
+                                flex_direction: FlexDirection::Row,
+                                padding: UiRect::horizontal(Val::Px(5.0)),
+                                margin: UiRect::all(Val::Px(5.0)),
+                                ..default()
+                            },
                             ..default()
-                        },
-                        MemoryDebugging,
-                    ));
+                        })
+                        .with_children(|parent| {
+                            parent
+                                .spawn(NodeBundle {
+                                    style: Style {
+                                        flex_direction: FlexDirection::Column,
+                                        align_items: AlignItems::FlexStart,
+                                        ..default()
+                                    },
+                                    ..default()
+                                })
+                                .with_children(|parent| {
+                                    let max_visible_instructions = 32;
+                                    parent.spawn((
+                                        TextBundle {
+                                            text: Text {
+                                                sections: (0..max_visible_instructions)
+                                                    .map(|_| {
+                                                        TextSection::new(
+                                                            "Code\n",
+                                                            TextStyle {
+                                                                font: fonts[CHOSEN_FONT_INDEX]
+                                                                    .clone(),
+                                                                font_size: 12.0,
+                                                                color: Color::WHITE,
+                                                                ..default()
+                                                            },
+                                                        )
+                                                    })
+                                                    .collect(),
+                                                justify: JustifyText::Left,
+                                                linebreak_behavior: BreakLineOn::NoWrap,
+                                            },
+                                            style: Style {
+                                                flex_grow: 0.0,
+                                                flex_shrink: 0.0,
+                                                min_width: Val::Px(280.0),
+                                                ..default()
+                                            },
+                                            ..default()
+                                        },
+                                        CodeDebugView {
+                                            max_visible_instructions,
+                                            active_instruction_position: CodeOffset::OffsetFromTop(
+                                                0,
+                                            ),
+                                        },
+                                    ));
+                                });
+
+                            parent
+                                .spawn(NodeBundle {
+                                    style: Style {
+                                        flex_direction: FlexDirection::Column,
+                                        align_items: AlignItems::FlexStart,
+                                        margin: UiRect::all(Val::Px(5.0)),
+                                        ..default()
+                                    },
+                                    ..default()
+                                })
+                                .with_children(|parent| {
+                                    parent.spawn((
+                                        TextBundle {
+                                            text: Text {
+                                                sections: vec![
+                                            TextSection::new(
+                                                "CPU Status\n",
+                                                TextStyle {
+                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
+                                                    font_size: 12.0,
+                                                    color: Color::WHITE,
+                                                    ..default()
+                                                },
+                                            ),
+                                            TextSection::new(
+                                                " N",
+                                                TextStyle {
+                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
+                                                    font_size: 12.0,
+                                                    color: Color::WHITE,
+                                                    ..default()
+                                                },
+                                            ),
+                                            TextSection::new(
+                                                " V",
+                                                TextStyle {
+                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
+                                                    font_size: 12.0,
+                                                    color: Color::WHITE,
+                                                    ..default()
+                                                },
+                                            ),
+                                            TextSection::new(
+                                                " -",
+                                                TextStyle {
+                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
+                                                    font_size: 12.0,
+                                                    color: Color::WHITE,
+                                                    ..default()
+                                                },
+                                            ),
+                                            TextSection::new(
+                                                " B",
+                                                TextStyle {
+                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
+                                                    font_size: 12.0,
+                                                    color: Color::WHITE,
+                                                    ..default()
+                                                },
+                                            ),
+                                            TextSection::new(
+                                                " D",
+                                                TextStyle {
+                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
+                                                    font_size: 12.0,
+                                                    color: Color::WHITE,
+                                                    ..default()
+                                                },
+                                            ),
+                                            TextSection::new(
+                                                " I",
+                                                TextStyle {
+                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
+                                                    font_size: 12.0,
+                                                    color: Color::WHITE,
+                                                    ..default()
+                                                },
+                                            ),
+                                            TextSection::new(
+                                                " Z",
+                                                TextStyle {
+                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
+                                                    font_size: 12.0,
+                                                    color: Color::WHITE,
+                                                    ..default()
+                                                },
+                                            ),
+                                            TextSection::new(
+                                                " C",
+                                                TextStyle {
+                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
+                                                    font_size: 12.0,
+                                                    color: Color::WHITE,
+                                                    ..default()
+                                                },
+                                            ),
+                                            TextSection::new(
+                                                "\nPC: $0000\nA: $00 \nX: $00 \nY: $00\nSP: $00",
+                                                TextStyle {
+                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
+                                                    font_size: 12.0,
+                                                    color: Color::WHITE,
+                                                    ..default()
+                                                },
+                                            ),
+                                        ],
+                                                justify: JustifyText::Center,
+                                                linebreak_behavior: BreakLineOn::NoWrap,
+                                            },
+                                            ..default()
+                                        },
+                                        CpuStatusDebugView,
+                                    ));
+
+                                    parent.spawn((
+                                        TextBundle {
+                                            text: Text {
+                                                sections: vec![TextSection::new(
+                                                    "No memory fetched for visualization yet.",
+                                                    TextStyle {
+                                                        font: fonts[CHOSEN_FONT_INDEX].clone(),
+                                                        font_size: 12.0,
+                                                        color: Color::WHITE,
+                                                        ..default()
+                                                    },
+                                                )],
+                                                justify: JustifyText::Left,
+                                                linebreak_behavior: BreakLineOn::NoWrap,
+                                            },
+                                            style: Style {
+                                                align_self: AlignSelf::FlexEnd,
+                                                ..default()
+                                            },
+                                            ..default()
+                                        },
+                                        MemoryDebugView,
+                                    ));
+                                });
+                        });
 
                     parent
                         .spawn(NodeBundle {
                             style: Style {
-                                width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 4.0),
-                                height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
                                 margin: UiRect::all(Val::Px(5.0)),
                                 flex_direction: FlexDirection::Row,
                                 ..default()
@@ -366,11 +572,13 @@ fn nes_debugging_pattern_table_visualization(
     }
 }
 
-fn nes_debuggin_memory_visualization(
+fn nes_debugging_memory_visualization(
     mut nes_query: Query<&mut NesEmulator>,
-    mut memory_text_target: Query<&mut Text, With<MemoryDebugging>>,
+    mut memory_text_target: Query<&mut Text, With<MemoryDebugView>>,
 ) {
-    for mut nes_emulator in nes_query.iter_mut() {
+    for (mut nes_emulator, mut text_target) in
+        nes_query.iter_mut().zip(memory_text_target.iter_mut())
+    {
         let mut memory_text = String::new();
         let memory_page = 0x0000u16;
 
@@ -394,8 +602,95 @@ fn nes_debuggin_memory_visualization(
             memory_text.push('\n');
         }
 
-        for mut text in memory_text_target.iter_mut() {
-            text.sections[0].value = memory_text.clone();
+        text_target.sections[0].value = memory_text.clone();
+    }
+}
+
+fn nes_debugging_cpu_status_visualization(
+    nes_query: Query<&NesEmulator>,
+    mut cpu_status_text_target: Query<&mut Text, With<CpuStatusDebugView>>,
+) {
+    static GREEN: Color = Color::linear_rgb(0.0, 1.0, 0.0);
+    static RED: Color = Color::linear_rgb(1.0, 0.0, 0.0);
+    for (nes_emulator, mut text_target) in nes_query.iter().zip(cpu_status_text_target.iter_mut()) {
+        let status = [
+            nes_emulator.nes.cpu().status_sign_bit(),
+            nes_emulator.nes.cpu().status_overflow_bit(),
+            nes_emulator.nes.cpu().status_unused_bit(),
+            nes_emulator.nes.cpu().status_break_command_bit(),
+            nes_emulator.nes.cpu().status_decimal_mode_bit(),
+            nes_emulator.nes.cpu().status_interrupt_disable_bit(),
+            nes_emulator.nes.cpu().status_zero_bit(),
+            nes_emulator.nes.cpu().status_carry_bit(),
+        ];
+        for i in 0..8 {
+            text_target.sections[i + 1].style.color = if status[i] { GREEN } else { RED };
+        }
+        text_target.sections[9].value = format!(
+            "\nPC: ${:04X}\nA: ${:02X} \nX: ${:02X} \nY: ${:02X}\nSP: ${:02X}",
+            nes_emulator.nes.cpu().program_counter(),
+            nes_emulator.nes.cpu().register_a(),
+            nes_emulator.nes.cpu().register_x(),
+            nes_emulator.nes.cpu().register_y(),
+            nes_emulator.nes.cpu().stack_pointer()
+        );
+    }
+}
+
+fn nes_debugging_cpu_instructions_visualization(
+    mut nes_query: Query<&mut NesEmulator>,
+    mut code_text_target: Query<(&mut Text, &CodeDebugView), With<CodeDebugView>>,
+) {
+    static ACTIVE_COLOUR: Color = Color::linear_rgb(0.0, 1.0, 1.0);
+    static INACTIVE_COLOUR: Color = Color::linear_rgb(1.0, 1.0, 1.0);
+    for (mut nes_emulator, (mut text_target, code_debug_view)) in
+        nes_query.iter_mut().zip(code_text_target.iter_mut())
+    {
+        let (active_instruction_line, num_instructions_to_disassemble) =
+            match code_debug_view.active_instruction_position {
+                CodeOffset::Centered => {
+                    let line = code_debug_view.max_visible_instructions / 2;
+                    (line, code_debug_view.max_visible_instructions - line)
+                }
+                CodeOffset::OffsetFromCenter(offset) => {
+                    let line =
+                        ((code_debug_view.max_visible_instructions / 2) as i32 + offset) as usize;
+                    (line, code_debug_view.max_visible_instructions - line)
+                }
+                CodeOffset::OffsetFromTop(offset) => {
+                    (offset, code_debug_view.max_visible_instructions - offset)
+                }
+                CodeOffset::OffsetFromBottom(offset) => {
+                    (code_debug_view.max_visible_instructions - offset, offset)
+                }
+            };
+
+        let pc = nes_emulator.nes.cpu().program_counter();
+        let disassembly = nes_emulator
+            .nes
+            .cpu_mut()
+            .disassemble_range(pc, num_instructions_to_disassemble);
+        let num_blanks = num_instructions_to_disassemble - disassembly.len();
+
+        for (i, disassembled_instruction) in disassembly.iter().enumerate() {
+            let line = active_instruction_line + i;
+            if line < code_debug_view.max_visible_instructions {
+                text_target.sections[line].value =
+                    format!("{}\n", disassembled_instruction.as_str());
+                text_target.sections[line].style.color = if line == active_instruction_line {
+                    ACTIVE_COLOUR
+                } else {
+                    INACTIVE_COLOUR
+                };
+            }
+        }
+
+        for i in 0..num_blanks {
+            let line = active_instruction_line + disassembly.len() + i;
+            if line < code_debug_view.max_visible_instructions {
+                text_target.sections[line].value = "\n".to_string();
+                text_target.sections[line].style.color = INACTIVE_COLOUR;
+            }
         }
     }
 }

@@ -49,6 +49,14 @@ impl Nes {
         );
     }
 
+    pub fn cpu(&self) -> &cpu::Cpu {
+        &self.cpu
+    }
+
+    pub fn cpu_mut(&mut self) -> &mut cpu::Cpu {
+        &mut self.cpu
+    }
+
     pub fn frame<F>(&mut self, mut set_pixel_action: F)
     where
         F: FnMut(usize, usize, u8, u8, u8),

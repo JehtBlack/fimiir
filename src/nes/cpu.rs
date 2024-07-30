@@ -72,6 +72,38 @@ impl Cpu {
         self.cycles = 8; // reset takes time
     }
 
+    pub fn status_sign_bit(&self) -> bool {
+        self.status.contains(CpuFlags::N)
+    }
+
+    pub fn status_overflow_bit(&self) -> bool {
+        self.status.contains(CpuFlags::V)
+    }
+
+    pub fn status_unused_bit(&self) -> bool {
+        self.status.contains(CpuFlags::U)
+    }
+
+    pub fn status_break_command_bit(&self) -> bool {
+        self.status.contains(CpuFlags::B)
+    }
+
+    pub fn status_decimal_mode_bit(&self) -> bool {
+        self.status.contains(CpuFlags::D)
+    }
+
+    pub fn status_interrupt_disable_bit(&self) -> bool {
+        self.status.contains(CpuFlags::I)
+    }
+
+    pub fn status_zero_bit(&self) -> bool {
+        self.status.contains(CpuFlags::Z)
+    }
+
+    pub fn status_carry_bit(&self) -> bool {
+        self.status.contains(CpuFlags::C)
+    }
+
     pub fn register_a(&self) -> u8 {
         self.a
     }
@@ -88,6 +120,10 @@ impl Cpu {
         self.pc
     }
 
+    pub fn stack_pointer(&self) -> u8 {
+        self.sp
+    }
+
     pub fn increment_program_counter(&mut self, amount: u16) {
         self.pc += amount;
     }
@@ -98,6 +134,114 @@ impl Cpu {
 
     pub fn complete(&self) -> bool {
         self.cycles == 0
+    }
+
+    pub fn disassemble_range(&mut self, start_addr: u16, num_instructions: usize) -> Vec<String> {
+        let mut addr = start_addr;
+        let mut disassembly = Vec::new();
+        while disassembly.len() < num_instructions {
+            let (line, next_addr) = self.disassemble(addr);
+            disassembly.push(line);
+
+            if next_addr < addr {
+                // wrapped around to the start of memory, no further disassembly
+                break;
+            }
+
+            addr = next_addr;
+        }
+        disassembly
+    }
+
+    pub fn disassemble(&mut self, start_addr: u16) -> (String, u16) {
+        let mut addr = start_addr;
+        let opcode = self.read_byte(start_addr);
+        addr = addr.wrapping_add(1);
+
+        let cpu_op_code = &CPU_OP_CODES[opcode as usize];
+
+        let disassembly = format!(
+            "${:04X}: {} {}",
+            start_addr,
+            cpu_op_code.mnemonic,
+            match cpu_op_code.addr_mode {
+                AddressingMode::Implicit => {
+                    "{IMP}".into()
+                }
+                AddressingMode::Accumulator => {
+                    "{ACC}".into()
+                }
+                AddressingMode::Immediate => {
+                    let value = self.read_byte(addr);
+                    addr = addr.wrapping_add(1);
+                    format!("#${:02X} {{IMM}}", value)
+                }
+                AddressingMode::ZeroPage => {
+                    let zero_page_addr = self.read_byte(addr);
+                    addr = addr.wrapping_add(1);
+                    format!("${:02X} {{ZP0}}", zero_page_addr)
+                }
+                AddressingMode::ZeroPageX => {
+                    let zero_page_addr = self.read_byte(addr);
+                    addr = addr.wrapping_add(1);
+                    format!("${:02X}X {{ZPX}}", zero_page_addr)
+                }
+                AddressingMode::ZeroPageY => {
+                    let zero_page_addr = self.read_byte(addr);
+                    addr = addr.wrapping_add(1);
+                    format!("${:02X}Y {{ZPY}}", zero_page_addr)
+                }
+                AddressingMode::Relative => {
+                    let offset = self.read_byte(addr) as i8;
+                    addr = addr.wrapping_add(1);
+                    format!(
+                        "${:02X}, [${:04X}] {{REL}}",
+                        offset,
+                        addr.wrapping_add_signed(offset as i16) as u16
+                    )
+                }
+                AddressingMode::Absolute => {
+                    let lo = self.read_byte(addr);
+                    let hi = self.read_byte(addr + 1);
+                    addr = addr.wrapping_add(2);
+                    let target = ((hi as u16) << 8) | lo as u16;
+                    format!("${:04X} {{ABS}}", target)
+                }
+                AddressingMode::AbsoluteX => {
+                    let lo = self.read_byte(addr);
+                    let hi = self.read_byte(addr + 1);
+                    addr = addr.wrapping_add(2);
+                    let target = ((hi as u16) << 8) | lo as u16;
+                    format!("${:04X}, X {{ABS}}", target)
+                }
+                AddressingMode::AbsoluteY => {
+                    let lo = self.read_byte(addr);
+                    let hi = self.read_byte(addr + 1);
+                    addr = addr.wrapping_add(2);
+                    let target = ((hi as u16) << 8) | lo as u16;
+                    format!("${:04X}, Y {{ABS}}", target)
+                }
+                AddressingMode::Indirect => {
+                    let lo = self.read_byte(addr);
+                    let hi = self.read_byte(addr + 1);
+                    addr = addr.wrapping_add(2);
+                    let target = ((hi as u16) << 8) | lo as u16;
+                    format!("(${:04X}) {{IND}}", target)
+                }
+                AddressingMode::IndirectX => {
+                    let zero_page_addr = self.read_byte(addr);
+                    addr = addr.wrapping_add(1);
+                    format!("(${:02X}, X) {{IZX}}", zero_page_addr)
+                }
+                AddressingMode::IndirectY => {
+                    let zero_page_addr = self.read_byte(addr);
+                    addr = addr.wrapping_add(1);
+                    format!("(${:02X}), Y {{IZY}}", zero_page_addr)
+                }
+            }
+        );
+
+        (disassembly, addr)
     }
 
     pub fn fill_buffer_with_pattern_table<F>(
