@@ -116,6 +116,14 @@ impl Bus {
         );
     }
 
+    pub fn fill_buffer_with_palette_colours<F>(&mut self, palette: u8, set_pixel_action: &mut F)
+    where
+        F: FnMut(usize, u8, u8, u8),
+    {
+        self.ppu
+            .fill_buffer_with_palette_colours(palette, set_pixel_action);
+    }
+
     /// returns the number of PPU cycles that have passed, if a NMI should be triggered and the IRQ state
     pub fn tick<F>(&mut self, cycle: usize, set_pixel_action: &mut F) -> (usize, bool, bool)
     where

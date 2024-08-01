@@ -12,6 +12,7 @@ bevy_dylib = "0.14.0"
 bitflags = "2.6.0"
 crossbeam-channel = "0.5.13"
 lazy_static = "1.5.0"
+leafwing-input-manager = "0.14.0"
 
 [profile.dev]
 opt-level = 0

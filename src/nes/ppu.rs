@@ -1,5 +1,7 @@
 use super::mappers::{Mapper, MirroringMode};
-use super::{NES_SCREEN_HEIGHT, NES_SCREEN_WIDTH};
+use super::{
+    NES_SCREEN_HEIGHT, NES_SCREEN_WIDTH, NUM_COLOURS_IN_NES_PALETTE, NUM_NES_COLOUR_PALETTES,
+};
 
 #[derive(Clone, Copy)]
 struct PpuColour {
@@ -60,8 +62,6 @@ pub(crate) struct Ppu {
     palette_table: [u8; 32],
     pattern_table: [u8; 8192],
 
-    screen_buffer: [PpuColour; NES_SCREEN_WIDTH * NES_SCREEN_HEIGHT],
-
     frame_complete: bool,
     nmi: bool,
 
@@ -103,6 +103,8 @@ pub(crate) struct Ppu {
     num_cycles_to_complete_this_tick: usize,
 
     mapper: Box<dyn Mapper>,
+
+    frame_count: usize,
 }
 
 impl Ppu {
@@ -179,7 +181,6 @@ impl Ppu {
             name_table: [0; 2048],
             palette_table: [0; 32],
             pattern_table: [0; 8192],
-            screen_buffer: [PpuColour::new(0, 0, 0); NES_SCREEN_WIDTH * NES_SCREEN_HEIGHT],
             frame_complete: false,
             nmi: false,
             status: PpuFlags::empty(),
@@ -221,6 +222,7 @@ impl Ppu {
             clock_count: 0,
             num_cycles_to_complete_this_tick: 0,
             mapper,
+            frame_count: 0,
         }
     }
 
@@ -253,6 +255,7 @@ impl Ppu {
         self.sprite_zero_being_rendered = false;
         self.clock_count = 0;
         self.num_cycles_to_complete_this_tick = 3;
+        self.frame_count = 0;
     }
 
     pub fn mapper(&mut self) -> &mut dyn Mapper {
@@ -394,6 +397,21 @@ impl Ppu {
         }
     }
 
+    pub fn fill_buffer_with_palette_colours<F>(&mut self, palette: u8, set_pixel: &mut F)
+    where
+        F: FnMut(usize, u8, u8, u8),
+    {
+        for palette_offset in 0..NUM_COLOURS_IN_NES_PALETTE {
+            let colour = self.get_colour_from_palette_ram(palette, palette_offset as u8);
+            set_pixel(
+                palette_offset,
+                colour.channels[0],
+                colour.channels[1],
+                colour.channels[2],
+            );
+        }
+    }
+
     fn read_vram_byte(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match self.mapper.ppu_read_byte(addr) {
@@ -494,7 +512,7 @@ impl Ppu {
     }
 
     pub fn write_oam(&mut self, addr: u8, data: u8) {
-        let oam_addr = addr & 0xFC;
+        let oam_addr = (addr & 0xFC) >> 2;
         match addr & 0x03 {
             0 => self.object_attribute_memory[oam_addr as usize].y = data,
             1 => self.object_attribute_memory[oam_addr as usize].id = data,
@@ -505,7 +523,7 @@ impl Ppu {
     }
 
     fn read_oam(&self, addr: u8) -> u8 {
-        let oam_addr = addr & 0xFC;
+        let oam_addr = (addr & 0xFC) >> 2;
         match addr & 0x03 {
             0 => self.object_attribute_memory[oam_addr as usize].y,
             1 => self.object_attribute_memory[oam_addr as usize].id,
@@ -547,7 +565,7 @@ impl Ppu {
 
     fn get_colour_from_palette_ram(&self, palette: u8, pixel: u8) -> PpuColour {
         let colour_selection =
-            self.read_vram_byte(0x3F00 + ((palette as u16) << 2) + (pixel as u16));
+            self.read_vram_byte(0x3F00 + ((palette << 2) as u16) + (pixel as u16));
         self.colour_palette[(colour_selection & 0x3F) as usize]
     }
 
@@ -1016,7 +1034,13 @@ impl Ppu {
                     && y < NES_SCREEN_HEIGHT
                 {
                     let colour = self.get_colour_from_palette_ram(palette, pixel);
-                    // let colour = PpuColour::new(0xFF, 0x00, 0xFF);
+                    // let colour = if (y * NES_SCREEN_WIDTH + x)
+                    //     == (self.frame_count % (NES_SCREEN_HEIGHT * NES_SCREEN_WIDTH))
+                    // {
+                    //     PpuColour::new(0xFF, 0x00, 0xFF)
+                    // } else {
+                    //     PpuColour::new(0x00, 0x00, 0x00)
+                    // };
                     set_pixel(
                         x,
                         y,
@@ -1046,6 +1070,7 @@ impl Ppu {
                     self.scanline = -1;
                     self.frame_complete = true;
                     self.num_cycles_to_complete_this_tick = 0;
+                    self.frame_count = self.frame_count.wrapping_add(1);
                 }
             }
 

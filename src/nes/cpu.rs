@@ -259,6 +259,14 @@ impl Cpu {
         );
     }
 
+    pub fn fill_buffer_with_palette_colours<F>(&mut self, palette: u8, set_pixel_action: &mut F)
+    where
+        F: FnMut(usize, u8, u8, u8),
+    {
+        self.bus
+            .fill_buffer_with_palette_colours(palette, set_pixel_action);
+    }
+
     pub fn tick_frame<F>(&mut self, system_cycle: usize, set_pixel_action: &mut F) -> usize
     where
         F: FnMut(usize, usize, u8, u8, u8),
