@@ -25,7 +25,7 @@ use bevy::{
 use crossbeam_channel::{Receiver, Sender};
 use leafwing_input_manager::{action_state, input_map, prelude::*};
 
-static NES_TEST: &'static [u8] = include_bytes!("../assets/roms/Super Mario Bros (E).nes");
+static NES_TEST: &'static [u8] = include_bytes!("../assets/roms/nestest.nes");
 
 const NES_PALETTE_SWATCH_PIXEL_WIDTH: usize = 64;
 
