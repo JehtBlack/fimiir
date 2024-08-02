@@ -1034,9 +1034,7 @@ impl Ppu {
                     && y < NES_SCREEN_HEIGHT
                 {
                     let colour = self.get_colour_from_palette_ram(palette, pixel);
-                    // let colour = if (y * NES_SCREEN_WIDTH + x)
-                    //     == (self.frame_count % (NES_SCREEN_HEIGHT * NES_SCREEN_WIDTH))
-                    // {
+                    // let colour = if y == (self.frame_count % NES_SCREEN_HEIGHT) {
                     //     PpuColour::new(0xFF, 0x00, 0xFF)
                     // } else {
                     //     PpuColour::new(0x00, 0x00, 0x00)

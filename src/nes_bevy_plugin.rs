@@ -1,29 +1,12 @@
-use std::default;
-
 use crate::nes::{
-    self, NES_PATTERN_TABLE_HEIGHT, NES_PATTERN_TABLE_WIDTH, NES_SCREEN_HEIGHT, NES_SCREEN_WIDTH,
+    NES_PATTERN_TABLE_HEIGHT, NES_PATTERN_TABLE_WIDTH, NES_SCREEN_HEIGHT, NES_SCREEN_WIDTH,
     NUM_COLOURS_IN_NES_PALETTE, NUM_NES_COLOUR_PALETTES, NUM_NES_PATTERN_TABLES,
 };
 
 use super::nes::Nes;
-use bevy::{
-    core_pipeline::core_2d::graph::input,
-    prelude::{default, *},
-    render::{
-        render_asset::{RenderAssetUsages, RenderAssets},
-        render_graph::{self, NodeRunError, RenderGraph, RenderGraphContext, RenderLabel},
-        render_resource::{
-            Buffer, BufferInitDescriptor, CommandEncoderDescriptor, Extent3d, ImageCopyBuffer,
-            ImageDataLayout, TextureDimension, TextureFormat,
-        },
-        renderer::{RenderContext, RenderDevice},
-        texture::BevyDefault,
-        RenderApp,
-    },
-    text::BreakLineOn,
-};
-use crossbeam_channel::{Receiver, Sender};
-use leafwing_input_manager::{action_state, input_map, prelude::*};
+use bevy::{prelude::*, render::render_asset::RenderAssetUsages, text::BreakLineOn};
+use image::DynamicImage;
+use leafwing_input_manager::prelude::*;
 
 static NES_TEST: &'static [u8] = include_bytes!("../assets/roms/nestest.nes");
 
@@ -65,12 +48,11 @@ impl Plugin for NesPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(InputManagerPlugin::<NesInput>::default())
             .add_plugins(InputManagerPlugin::<NesDebuggingActions>::default())
-            .add_plugins(EmulatorScreenPlugin)
             .insert_resource(Time::<Fixed>::from_hz(60.0))
             .insert_state(EmulationState::default())
             .add_systems(Startup, setup_nes)
             .add_systems(
-                FixedUpdate,
+                Update,
                 (
                     (
                         nes_frame.run_if(
@@ -102,100 +84,31 @@ impl Plugin for NesPlugin {
     }
 }
 
-pub struct EmulatorScreenPlugin;
-impl Plugin for EmulatorScreenPlugin {
-    fn build(&self, app: &mut App) {
-        let (s, r) = crossbeam_channel::unbounded();
-
-        let render_app = app
-            .insert_resource(EmulatorScreenSender(s))
-            .sub_app_mut(RenderApp);
-
-        let mut graph = render_app.world_mut().resource_mut::<RenderGraph>();
-        graph.add_node(EmulatorScreenCopy, EmulatorScreenCopyDriver);
-        graph.add_node_edge(EmulatorScreenCopy, bevy::render::graph::CameraDriverLabel); // perform emulator screen copy before rendering the camera
-
-        render_app.insert_resource(EmulatorScreenReceiver(r));
-    }
-}
-
-#[derive(Resource, Deref)]
-pub struct EmulatorScreenSender(Sender<(Buffer, Extent3d, Handle<Image>)>);
-
-#[derive(Resource, Deref)]
-struct EmulatorScreenReceiver(Receiver<(Buffer, Extent3d, Handle<Image>)>);
-
-#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
-struct EmulatorScreenCopy;
-
-#[derive(Default)]
-struct EmulatorScreenCopyDriver;
-
-impl render_graph::Node for EmulatorScreenCopyDriver {
-    fn run(
-        &self,
-        _graph: &mut RenderGraphContext,
-        render_context: &mut RenderContext,
-        world: &World,
-    ) -> Result<(), NodeRunError> {
-        let receiver = world.get_resource::<EmulatorScreenReceiver>().unwrap();
-
-        if let Ok((buffer, buffer_dimensions, target_image_handle)) = receiver.try_recv() {
-            let gpu_images = world
-                .get_resource::<RenderAssets<bevy::render::texture::GpuImage>>()
-                .unwrap();
-            let target_image = gpu_images.get(&target_image_handle).unwrap();
-
-            let mut encoder = render_context
-                .render_device()
-                .create_command_encoder(&CommandEncoderDescriptor::default());
-
-            let copy_buffer = ImageCopyBuffer {
-                buffer: &buffer,
-                layout: ImageDataLayout {
-                    bytes_per_row: Some(buffer_dimensions.width * 4),
-                    rows_per_image: None,
-                    ..default()
-                },
-            };
-            encoder.copy_buffer_to_texture(
-                copy_buffer,
-                target_image.texture.as_image_copy(),
-                buffer_dimensions,
-            );
-
-            let render_queue = world
-                .get_resource::<bevy::render::renderer::RenderQueue>()
-                .unwrap();
-            render_queue.submit(std::iter::once(encoder.finish()));
-        }
-
-        Ok(())
-    }
-}
-
 #[derive(Component)]
 struct NesEmulator {
     nes: Box<Nes>,
-    screen_target: Handle<Image>,
 }
 
 #[derive(Component)]
 struct NesDebugExtensions {
     selected_palette: usize,
     memory_page: u8,
-    pattern_table_visualizations: [Handle<Image>; NUM_NES_PATTERN_TABLES],
-    colour_palette_visualization: [Handle<Image>; NUM_NES_COLOUR_PALETTES],
 }
 
 #[derive(Component)]
-struct MemoryDebugView;
+struct NesScreenViewer;
 
 #[derive(Component)]
-struct CpuStatusDebugView;
+struct MemoryDebugViewer;
 
 #[derive(Component)]
-struct ColourPaletteSwatchView(pub usize);
+struct CpuStatusDebugViewer;
+
+#[derive(Component, Deref)]
+struct NesPatternTableViewer(pub usize);
+
+#[derive(Component, Deref)]
+struct NesColourPaletteSwatchViewer(pub usize);
 
 #[derive(Component)]
 struct EmulatorStateView;
@@ -241,6 +154,238 @@ fn default_nes_debugging_input_map() -> InputMap<NesDebuggingActions> {
     input_map
 }
 
+fn add_nes_screen_emulator_info(
+    parent: &mut ChildBuilder,
+    text_style: &TextStyle,
+    emulator_state: &Res<State<EmulationState>>,
+) {
+    parent.spawn((
+        TextBundle::from_section(
+            format!("Emulator Status: {:?}", emulator_state.get()),
+            text_style.clone(),
+        ),
+        EmulatorStateView,
+    ));
+
+    parent.spawn((
+        TextBundle::from_section("Frame Counter: 0", text_style.clone()),
+        EmulatorFrameCounter,
+    ));
+}
+
+fn add_nes_screen(parent: &mut ChildBuilder, nes_screen_handle: Handle<Image>) {
+    parent.spawn((
+        ImageBundle {
+            style: Style {
+                width: Val::Px(NES_SCREEN_WIDTH as f32 * 2.0),
+                height: Val::Px(NES_SCREEN_HEIGHT as f32 * 2.0),
+                aspect_ratio: Some((NES_SCREEN_WIDTH as f32) / (NES_SCREEN_HEIGHT as f32)),
+                ..default()
+            },
+            image: UiImage::new(nes_screen_handle.clone()),
+            ..default()
+        },
+        NesScreenViewer,
+    ));
+}
+
+fn add_debugging_ui(
+    parent: &mut ChildBuilder,
+    text_style: &TextStyle,
+    pattern_table_visualizations: &[Handle<Image>],
+    colour_palette_visualizations: &[Handle<Image>],
+) {
+    parent
+        .spawn(NodeBundle {
+            style: Style {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            ..default()
+        })
+        .with_children(|parent| {
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        flex_direction: FlexDirection::Row,
+                        padding: UiRect::horizontal(Val::Px(5.0)),
+                        margin: UiRect::all(Val::Px(5.0)),
+                        ..default()
+                    },
+                    ..default()
+                })
+                .with_children(|parent| {
+                    parent
+                        .spawn(NodeBundle {
+                            style: Style {
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::FlexStart,
+                                ..default()
+                            },
+                            ..default()
+                        })
+                        .with_children(|parent| {
+                            let max_visible_instructions = 32;
+                            parent.spawn((
+                                TextBundle {
+                                    text: Text {
+                                        sections: (0..max_visible_instructions)
+                                            .map(|_| TextSection::new("Code\n", text_style.clone()))
+                                            .collect(),
+                                        justify: JustifyText::Left,
+                                        linebreak_behavior: BreakLineOn::NoWrap,
+                                    },
+                                    style: Style {
+                                        flex_grow: 0.0,
+                                        flex_shrink: 0.0,
+                                        min_width: Val::Px(280.0),
+                                        ..default()
+                                    },
+                                    ..default()
+                                },
+                                CodeDebugView {
+                                    max_visible_instructions,
+                                    active_instruction_position: CodeOffset::OffsetFromTop(0),
+                                },
+                            ));
+                        });
+
+                    parent
+                        .spawn(NodeBundle {
+                            style: Style {
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::FlexStart,
+                                margin: UiRect::all(Val::Px(5.0)),
+                                ..default()
+                            },
+                            ..default()
+                        })
+                        .with_children(|parent| {
+                            parent.spawn((
+                                TextBundle {
+                                    text: Text {
+                                        sections: vec![
+                                            TextSection::new("CPU Status\n", text_style.clone()),
+                                            TextSection::new(" N", text_style.clone()),
+                                            TextSection::new(" V", text_style.clone()),
+                                            TextSection::new(" -", text_style.clone()),
+                                            TextSection::new(" B", text_style.clone()),
+                                            TextSection::new(" D", text_style.clone()),
+                                            TextSection::new(" I", text_style.clone()),
+                                            TextSection::new(" Z", text_style.clone()),
+                                            TextSection::new(" C", text_style.clone()),
+                                            TextSection::new(
+                                                "\nPC: $0000\nA: $00 \nX: $00 \nY: $00\nSP: $00",
+                                                text_style.clone(),
+                                            ),
+                                        ],
+                                        justify: JustifyText::Center,
+                                        linebreak_behavior: BreakLineOn::NoWrap,
+                                    },
+                                    ..default()
+                                },
+                                CpuStatusDebugViewer,
+                            ));
+
+                            parent.spawn((
+                                TextBundle {
+                                    text: Text {
+                                        sections: vec![TextSection::new(
+                                            "No memory fetched for visualization yet.",
+                                            text_style.clone(),
+                                        )],
+                                        justify: JustifyText::Left,
+                                        linebreak_behavior: BreakLineOn::NoWrap,
+                                    },
+                                    style: Style {
+                                        align_self: AlignSelf::FlexEnd,
+                                        ..default()
+                                    },
+                                    ..default()
+                                },
+                                MemoryDebugViewer,
+                            ));
+                        });
+                });
+
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(5.0),
+                        ..default()
+                    },
+                    ..default()
+                })
+                .with_children(|parent| {
+                    for (i, swatch) in colour_palette_visualizations.iter().enumerate() {
+                        parent
+                            .spawn((
+                                NodeBundle {
+                                    style: Style {
+                                        flex_direction: FlexDirection::Column,
+                                        align_items: AlignItems::Center,
+                                        justify_items: JustifyItems::Center,
+                                        align_content: AlignContent::Center,
+                                        justify_content: JustifyContent::Center,
+                                        width: Val::Px(
+                                            NES_PALETTE_SWATCH_PIXEL_WIDTH as f32 + 10.0,
+                                        ),
+                                        height: Val::Px(16.0 + 10.0),
+                                        ..default()
+                                    },
+                                    background_color: BackgroundColor::DEFAULT,
+                                    ..default()
+                                },
+                                NesColourPaletteSwatchViewer(i),
+                            ))
+                            .with_children(|parent| {
+                                parent.spawn((
+                                    ImageBundle {
+                                        style: Style {
+                                            width: Val::Px(NES_PALETTE_SWATCH_PIXEL_WIDTH as f32),
+                                            height: Val::Px(16.0),
+                                            ..default()
+                                        },
+                                        image: UiImage::new(swatch.clone()),
+                                        ..default()
+                                    },
+                                    NesColourPaletteSwatchViewer(i),
+                                ));
+                            });
+                    }
+                });
+
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        margin: UiRect::all(Val::Px(5.0)),
+                        flex_direction: FlexDirection::Row,
+                        ..default()
+                    },
+                    ..default()
+                })
+                .with_children(|parent| {
+                    for (i, pattern_table) in pattern_table_visualizations.iter().enumerate() {
+                        parent.spawn((
+                            ImageBundle {
+                                style: Style {
+                                    width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 2.0),
+                                    height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
+                                    margin: UiRect::all(Val::Px(5.0)),
+                                    ..default()
+                                },
+                                image: UiImage::new(pattern_table.clone()),
+                                ..default()
+                            },
+                            NesPatternTableViewer(i),
+                        ));
+                    }
+                });
+        });
+}
+
 fn setup_nes(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
@@ -253,88 +398,95 @@ fn setup_nes(
         asset_server.load("fonts/Emulogic-zrEw.ttf"),
     ];
 
-    // need to create a texture asset for the NES screen
-    let buffer = [0xFFu8; NES_SCREEN_WIDTH * NES_SCREEN_HEIGHT * 4];
-    let nes_screen = Image::new_fill(
-        Extent3d {
-            width: NES_SCREEN_WIDTH as u32,
-            height: NES_SCREEN_HEIGHT as u32,
-            ..default()
-        },
-        TextureDimension::D2,
-        &buffer,
-        TextureFormat::bevy_default(),
-        RenderAssetUsages::all(),
-    );
-    let nes_screen_handle = images.add(nes_screen);
-
-    let pattern_buffer = [0xFFu8; NES_PATTERN_TABLE_WIDTH * NES_PATTERN_TABLE_HEIGHT * 4];
-    let pattern_table_visualizations = (0..NUM_NES_PATTERN_TABLES)
-        .into_iter()
-        .map(|_| {
-            images.add(Image::new_fill(
-                Extent3d {
-                    width: NES_PATTERN_TABLE_WIDTH as u32,
-                    height: NES_PATTERN_TABLE_HEIGHT as u32,
-                    ..default()
-                },
-                TextureDimension::D2,
-                &pattern_buffer,
-                TextureFormat::bevy_default(),
-                RenderAssetUsages::all(),
-            ))
-        })
-        .collect::<Vec<_>>();
-
-    let palette_buffer = [0xFFu8; NUM_COLOURS_IN_NES_PALETTE * 4];
-    let colour_palette_visualizations = (0..NUM_NES_COLOUR_PALETTES)
-        .into_iter()
-        .map(|_| {
-            images.add(Image::new_fill(
-                Extent3d {
-                    width: NES_PALETTE_SWATCH_PIXEL_WIDTH as u32,
-                    height: 1,
-                    ..default()
-                },
-                TextureDimension::D2,
-                &palette_buffer,
-                TextureFormat::bevy_default(),
-                RenderAssetUsages::all(),
-            ))
-        })
-        .collect::<Vec<_>>();
-
     let mut nes = Box::new(Nes::new(&NES_TEST));
     nes.reset();
 
+    let nes_screen_canvas_handle = images.add(Image::from_dynamic(
+        DynamicImage::new_rgba8(NES_SCREEN_WIDTH as u32, NES_PATTERN_TABLE_HEIGHT as u32),
+        true,
+        RenderAssetUsages::default(),
+    ));
+
+    let pattern_table_visualization_canvas_handles = [
+        images.add(Image::from_dynamic(
+            DynamicImage::new_rgba8(
+                NES_PATTERN_TABLE_WIDTH as u32,
+                NES_PATTERN_TABLE_HEIGHT as u32,
+            ),
+            true,
+            RenderAssetUsages::default(),
+        )),
+        images.add(Image::from_dynamic(
+            DynamicImage::new_rgba8(
+                NES_PATTERN_TABLE_WIDTH as u32,
+                NES_PATTERN_TABLE_HEIGHT as u32,
+            ),
+            true,
+            RenderAssetUsages::default(),
+        )),
+    ];
+
+    let colour_palette_visualization_canvas_handles = [
+        images.add(Image::from_dynamic(
+            DynamicImage::new_rgba8(NES_PALETTE_SWATCH_PIXEL_WIDTH as u32, 1),
+            true,
+            RenderAssetUsages::default(),
+        )),
+        images.add(Image::from_dynamic(
+            DynamicImage::new_rgba8(NES_PALETTE_SWATCH_PIXEL_WIDTH as u32, 1),
+            true,
+            RenderAssetUsages::default(),
+        )),
+        images.add(Image::from_dynamic(
+            DynamicImage::new_rgba8(NES_PALETTE_SWATCH_PIXEL_WIDTH as u32, 1),
+            true,
+            RenderAssetUsages::default(),
+        )),
+        images.add(Image::from_dynamic(
+            DynamicImage::new_rgba8(NES_PALETTE_SWATCH_PIXEL_WIDTH as u32, 1),
+            true,
+            RenderAssetUsages::default(),
+        )),
+        images.add(Image::from_dynamic(
+            DynamicImage::new_rgba8(NES_PALETTE_SWATCH_PIXEL_WIDTH as u32, 1),
+            true,
+            RenderAssetUsages::default(),
+        )),
+        images.add(Image::from_dynamic(
+            DynamicImage::new_rgba8(NES_PALETTE_SWATCH_PIXEL_WIDTH as u32, 1),
+            true,
+            RenderAssetUsages::default(),
+        )),
+        images.add(Image::from_dynamic(
+            DynamicImage::new_rgba8(NES_PALETTE_SWATCH_PIXEL_WIDTH as u32, 1),
+            true,
+            RenderAssetUsages::default(),
+        )),
+        images.add(Image::from_dynamic(
+            DynamicImage::new_rgba8(NES_PALETTE_SWATCH_PIXEL_WIDTH as u32, 1),
+            true,
+            RenderAssetUsages::default(),
+        )),
+    ];
+
     let mut nes_emulator = commands.spawn_empty();
-    nes_emulator.insert(NesEmulator {
-        nes,
-        screen_target: nes_screen_handle.clone(),
-    });
+    nes_emulator.insert(NesEmulator { nes });
     nes_emulator.insert(NesDebugExtensions {
         selected_palette: 0,
         memory_page: 0,
-        pattern_table_visualizations: [
-            pattern_table_visualizations[0].clone(),
-            pattern_table_visualizations[1].clone(),
-        ],
-        colour_palette_visualization: [
-            colour_palette_visualizations[0].clone(),
-            colour_palette_visualizations[1].clone(),
-            colour_palette_visualizations[2].clone(),
-            colour_palette_visualizations[3].clone(),
-            colour_palette_visualizations[4].clone(),
-            colour_palette_visualizations[5].clone(),
-            colour_palette_visualizations[6].clone(),
-            colour_palette_visualizations[7].clone(),
-        ],
     });
     nes_emulator.insert(InputManagerBundle::with_map(default_nes_input_map()));
     nes_emulator.insert(InputManagerBundle::with_map(default_nes_input_map()));
     nes_emulator.insert(InputManagerBundle::with_map(
         default_nes_debugging_input_map(),
     ));
+
+    let text_style = TextStyle {
+        font: fonts[CHOSEN_FONT_INDEX].clone(),
+        font_size: 12.0,
+        color: Color::WHITE,
+        ..default()
+    };
 
     // UI setup
     commands
@@ -355,70 +507,6 @@ fn setup_nes(
             parent
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Px(NES_SCREEN_WIDTH as f32 * 2.0),
-                        height: Val::Px(NES_SCREEN_WIDTH as f32 * 2.0),
-                        margin: UiRect::all(Val::Px(5.0)),
-                        flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    ..default()
-                })
-                .with_children(|parent| {
-                    parent
-                        .spawn(NodeBundle {
-                            style: Style {
-                                flex_direction: FlexDirection::Column,
-                                align_items: AlignItems::Center,
-                                ..default()
-                            },
-                            ..default()
-                        })
-                        .with_children(|parent| {
-                            parent.spawn((
-                                TextBundle::from_section(
-                                    format!("Emulator Status: {:?}", emulator_state.get()),
-                                    TextStyle {
-                                        font: fonts[CHOSEN_FONT_INDEX].clone(),
-                                        font_size: 12.0,
-                                        color: Color::WHITE,
-                                        ..default()
-                                    },
-                                ),
-                                EmulatorStateView,
-                            ));
-
-                            parent.spawn((
-                                TextBundle::from_section(
-                                    "Frame Counter: 0",
-                                    TextStyle {
-                                        font: fonts[CHOSEN_FONT_INDEX].clone(),
-                                        font_size: 12.0,
-                                        color: Color::WHITE,
-                                        ..default()
-                                    },
-                                ),
-                                EmulatorFrameCounter,
-                            ));
-
-                            parent.spawn((ImageBundle {
-                                style: Style {
-                                    width: Val::Px(NES_SCREEN_WIDTH as f32 * 2.0),
-                                    height: Val::Px(NES_SCREEN_HEIGHT as f32 * 2.0),
-                                    aspect_ratio: Some(
-                                        (NES_SCREEN_WIDTH as f32) / (NES_SCREEN_HEIGHT as f32),
-                                    ),
-                                    ..default()
-                                },
-                                image: UiImage::new(nes_screen_handle.clone()),
-                                ..default()
-                            },));
-                        });
-                });
-
-            parent
-                .spawn(NodeBundle {
-                    style: Style {
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Center,
                         ..default()
@@ -426,299 +514,30 @@ fn setup_nes(
                     ..default()
                 })
                 .with_children(|parent| {
-                    parent
-                        .spawn(NodeBundle {
-                            style: Style {
-                                flex_direction: FlexDirection::Row,
-                                padding: UiRect::horizontal(Val::Px(5.0)),
-                                margin: UiRect::all(Val::Px(5.0)),
-                                ..default()
-                            },
-                            ..default()
-                        })
-                        .with_children(|parent| {
-                            parent
-                                .spawn(NodeBundle {
-                                    style: Style {
-                                        flex_direction: FlexDirection::Column,
-                                        align_items: AlignItems::FlexStart,
-                                        ..default()
-                                    },
-                                    ..default()
-                                })
-                                .with_children(|parent| {
-                                    let max_visible_instructions = 32;
-                                    parent.spawn((
-                                        TextBundle {
-                                            text: Text {
-                                                sections: (0..max_visible_instructions)
-                                                    .map(|_| {
-                                                        TextSection::new(
-                                                            "Code\n",
-                                                            TextStyle {
-                                                                font: fonts[CHOSEN_FONT_INDEX]
-                                                                    .clone(),
-                                                                font_size: 12.0,
-                                                                color: Color::WHITE,
-                                                                ..default()
-                                                            },
-                                                        )
-                                                    })
-                                                    .collect(),
-                                                justify: JustifyText::Left,
-                                                linebreak_behavior: BreakLineOn::NoWrap,
-                                            },
-                                            style: Style {
-                                                flex_grow: 0.0,
-                                                flex_shrink: 0.0,
-                                                min_width: Val::Px(280.0),
-                                                ..default()
-                                            },
-                                            ..default()
-                                        },
-                                        CodeDebugView {
-                                            max_visible_instructions,
-                                            active_instruction_position: CodeOffset::OffsetFromTop(
-                                                0,
-                                            ),
-                                        },
-                                    ));
-                                });
-
-                            parent
-                                .spawn(NodeBundle {
-                                    style: Style {
-                                        flex_direction: FlexDirection::Column,
-                                        align_items: AlignItems::FlexStart,
-                                        margin: UiRect::all(Val::Px(5.0)),
-                                        ..default()
-                                    },
-                                    ..default()
-                                })
-                                .with_children(|parent| {
-                                    parent.spawn((
-                                        TextBundle {
-                                            text: Text {
-                                                sections: vec![
-                                            TextSection::new(
-                                                "CPU Status\n",
-                                                TextStyle {
-                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
-                                                    font_size: 12.0,
-                                                    color: Color::WHITE,
-                                                    ..default()
-                                                },
-                                            ),
-                                            TextSection::new(
-                                                " N",
-                                                TextStyle {
-                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
-                                                    font_size: 12.0,
-                                                    color: Color::WHITE,
-                                                    ..default()
-                                                },
-                                            ),
-                                            TextSection::new(
-                                                " V",
-                                                TextStyle {
-                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
-                                                    font_size: 12.0,
-                                                    color: Color::WHITE,
-                                                    ..default()
-                                                },
-                                            ),
-                                            TextSection::new(
-                                                " -",
-                                                TextStyle {
-                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
-                                                    font_size: 12.0,
-                                                    color: Color::WHITE,
-                                                    ..default()
-                                                },
-                                            ),
-                                            TextSection::new(
-                                                " B",
-                                                TextStyle {
-                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
-                                                    font_size: 12.0,
-                                                    color: Color::WHITE,
-                                                    ..default()
-                                                },
-                                            ),
-                                            TextSection::new(
-                                                " D",
-                                                TextStyle {
-                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
-                                                    font_size: 12.0,
-                                                    color: Color::WHITE,
-                                                    ..default()
-                                                },
-                                            ),
-                                            TextSection::new(
-                                                " I",
-                                                TextStyle {
-                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
-                                                    font_size: 12.0,
-                                                    color: Color::WHITE,
-                                                    ..default()
-                                                },
-                                            ),
-                                            TextSection::new(
-                                                " Z",
-                                                TextStyle {
-                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
-                                                    font_size: 12.0,
-                                                    color: Color::WHITE,
-                                                    ..default()
-                                                },
-                                            ),
-                                            TextSection::new(
-                                                " C",
-                                                TextStyle {
-                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
-                                                    font_size: 12.0,
-                                                    color: Color::WHITE,
-                                                    ..default()
-                                                },
-                                            ),
-                                            TextSection::new(
-                                                "\nPC: $0000\nA: $00 \nX: $00 \nY: $00\nSP: $00",
-                                                TextStyle {
-                                                    font: fonts[CHOSEN_FONT_INDEX].clone(),
-                                                    font_size: 12.0,
-                                                    color: Color::WHITE,
-                                                    ..default()
-                                                },
-                                            ),
-                                        ],
-                                                justify: JustifyText::Center,
-                                                linebreak_behavior: BreakLineOn::NoWrap,
-                                            },
-                                            ..default()
-                                        },
-                                        CpuStatusDebugView,
-                                    ));
-
-                                    parent.spawn((
-                                        TextBundle {
-                                            text: Text {
-                                                sections: vec![TextSection::new(
-                                                    "No memory fetched for visualization yet.",
-                                                    TextStyle {
-                                                        font: fonts[CHOSEN_FONT_INDEX].clone(),
-                                                        font_size: 12.0,
-                                                        color: Color::WHITE,
-                                                        ..default()
-                                                    },
-                                                )],
-                                                justify: JustifyText::Left,
-                                                linebreak_behavior: BreakLineOn::NoWrap,
-                                            },
-                                            style: Style {
-                                                align_self: AlignSelf::FlexEnd,
-                                                ..default()
-                                            },
-                                            ..default()
-                                        },
-                                        MemoryDebugView,
-                                    ));
-                                });
-                        });
-
-                    parent
-                        .spawn(NodeBundle {
-                            style: Style {
-                                flex_direction: FlexDirection::Row,
-                                column_gap: Val::Px(5.0),
-                                ..default()
-                            },
-                            ..default()
-                        })
-                        .with_children(|parent| {
-                            for i in 0..NUM_NES_COLOUR_PALETTES {
-                                parent
-                                    .spawn((
-                                        NodeBundle {
-                                            style: Style {
-                                                flex_direction: FlexDirection::Column,
-                                                align_items: AlignItems::Center,
-                                                justify_items: JustifyItems::Center,
-                                                align_content: AlignContent::Center,
-                                                justify_content: JustifyContent::Center,
-                                                width: Val::Px(
-                                                    NES_PALETTE_SWATCH_PIXEL_WIDTH as f32 + 10.0,
-                                                ),
-                                                height: Val::Px(16.0 + 10.0),
-                                                ..default()
-                                            },
-                                            background_color: BackgroundColor::DEFAULT,
-                                            ..default()
-                                        },
-                                        ColourPaletteSwatchView(i),
-                                    ))
-                                    .with_children(|parent| {
-                                        parent.spawn(ImageBundle {
-                                            style: Style {
-                                                width: Val::Px(
-                                                    NES_PALETTE_SWATCH_PIXEL_WIDTH as f32,
-                                                ),
-                                                height: Val::Px(16.0),
-                                                ..default()
-                                            },
-                                            image: UiImage::new(
-                                                colour_palette_visualizations[i].clone(),
-                                            ),
-                                            ..default()
-                                        });
-                                    });
-                            }
-                        });
-
-                    parent
-                        .spawn(NodeBundle {
-                            style: Style {
-                                margin: UiRect::all(Val::Px(5.0)),
-                                flex_direction: FlexDirection::Row,
-                                ..default()
-                            },
-                            ..default()
-                        })
-                        .with_children(|parent| {
-                            parent.spawn(ImageBundle {
-                                style: Style {
-                                    width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 2.0),
-                                    height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
-                                    margin: UiRect::all(Val::Px(5.0)),
-                                    ..default()
-                                },
-                                image: UiImage::new(pattern_table_visualizations[0].clone()),
-                                ..default()
-                            });
-
-                            parent.spawn(ImageBundle {
-                                style: Style {
-                                    width: Val::Px(NES_PATTERN_TABLE_WIDTH as f32 * 2.0),
-                                    height: Val::Px(NES_PATTERN_TABLE_HEIGHT as f32 * 2.0),
-                                    margin: UiRect::all(Val::Px(5.0)),
-                                    ..default()
-                                },
-                                image: UiImage::new(pattern_table_visualizations[1].clone()),
-                                ..default()
-                            });
-                        });
+                    add_nes_screen_emulator_info(parent, &text_style, &emulator_state);
+                    add_nes_screen(parent, nes_screen_canvas_handle);
                 });
+
+            add_debugging_ui(
+                parent,
+                &text_style,
+                &pattern_table_visualization_canvas_handles,
+                &colour_palette_visualization_canvas_handles,
+            );
         });
 }
 
 fn nes_frame(
     mut query: Query<(&mut NesEmulator, &ActionState<NesInput>)>,
-    screen_sender: ResMut<EmulatorScreenSender>,
-    render_device: Res<RenderDevice>,
+    mut viewer_query: Query<&mut UiImage, With<NesScreenViewer>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     // need to prepare an ImageCopyBuffer during the frame, once the frame is complete
     // the buffer will be used to update the texture asset
-    for (mut nes_emulator, _joypad1) in query.iter_mut() {
-        let mut nes_screen_data = [0 as u8; NES_SCREEN_WIDTH * NES_SCREEN_HEIGHT * 4];
+    for ((mut nes_emulator, _joypad1), mut image_target) in
+        query.iter_mut().zip(viewer_query.iter_mut())
+    {
+        let mut nes_screen_data = vec![0; NES_SCREEN_WIDTH * NES_SCREEN_HEIGHT * 4];
         nes_emulator.nes.frame(|x, y, r, g, b| {
             let i = (y * NES_SCREEN_WIDTH + x) * 4;
             nes_screen_data[i] = r;
@@ -727,23 +546,18 @@ fn nes_frame(
             nes_screen_data[i + 3] = 0xFF;
         });
 
-        let nes_screen_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
-            label: Some("NES Screen 0"),
-            contents: &nes_screen_data,
-            usage: bevy::render::render_resource::BufferUsages::COPY_SRC,
-        });
-
-        screen_sender
-            .send((
-                nes_screen_buffer,
-                Extent3d {
-                    width: NES_SCREEN_WIDTH as u32,
-                    height: NES_SCREEN_HEIGHT as u32,
-                    depth_or_array_layers: 1,
-                },
-                nes_emulator.screen_target.clone(),
-            ))
-            .unwrap();
+        let rgba_data = image::RgbaImage::from_raw(
+            NES_SCREEN_WIDTH as u32,
+            NES_SCREEN_HEIGHT as u32,
+            nes_screen_data,
+        )
+        .unwrap();
+        let new_canvas = Image::from_dynamic(
+            DynamicImage::ImageRgba8(rgba_data),
+            true,
+            RenderAssetUsages::default(),
+        );
+        image_target.texture = images.add(new_canvas);
     }
 }
 
@@ -800,13 +614,14 @@ fn nes_debugging_show_emulator_frame_counter(
 
 fn nes_debugging_pattern_table_visualization(
     mut query: Query<(&mut NesEmulator, &NesDebugExtensions)>,
-    screen_sender: ResMut<EmulatorScreenSender>,
-    render_device: Res<RenderDevice>,
+    mut viewer_query: Query<(&mut UiImage, &NesPatternTableViewer), With<NesPatternTableViewer>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     for (mut nes_emulator, nes_debug_ext) in query.iter_mut() {
-        for i in 0..NUM_NES_PATTERN_TABLES {
+        for (mut image_target, pattern_table) in viewer_query.iter_mut() {
+            let i = pattern_table.0;
             let mut pattern_table_data =
-                [0 as u8; NES_PATTERN_TABLE_WIDTH * NES_PATTERN_TABLE_HEIGHT * 4];
+                vec![0; NES_PATTERN_TABLE_WIDTH * NES_PATTERN_TABLE_HEIGHT * 4];
             nes_emulator.nes.fill_buffer_with_pattern_table(
                 i,
                 nes_debug_ext.selected_palette,
@@ -819,37 +634,35 @@ fn nes_debugging_pattern_table_visualization(
                 },
             );
 
-            let pattern_table_image =
-                render_device.create_buffer_with_data(&BufferInitDescriptor {
-                    label: Some(format!("NES Pattern Table {}", i).as_str()),
-                    contents: &pattern_table_data,
-                    usage: bevy::render::render_resource::BufferUsages::COPY_SRC,
-                });
-
-            screen_sender
-                .send((
-                    pattern_table_image,
-                    Extent3d {
-                        width: NES_PATTERN_TABLE_WIDTH as u32,
-                        height: NES_PATTERN_TABLE_HEIGHT as u32,
-                        depth_or_array_layers: 1,
-                    },
-                    nes_debug_ext.pattern_table_visualizations[i].clone(),
-                ))
-                .unwrap();
+            let rgba_data = image::RgbaImage::from_raw(
+                NES_PATTERN_TABLE_WIDTH as u32,
+                NES_PATTERN_TABLE_HEIGHT as u32,
+                pattern_table_data,
+            )
+            .unwrap();
+            let new_canvas = Image::from_dynamic(
+                DynamicImage::ImageRgba8(rgba_data),
+                true,
+                RenderAssetUsages::default(),
+            );
+            image_target.texture = images.add(new_canvas);
         }
     }
 }
 
 fn nes_debugging_colour_palette_visualization(
-    mut query: Query<(&mut NesEmulator, &NesDebugExtensions)>,
-    screen_sender: ResMut<EmulatorScreenSender>,
-    render_device: Res<RenderDevice>,
+    mut query: Query<&mut NesEmulator>,
+    mut viewer_query: Query<
+        (&mut UiImage, &NesColourPaletteSwatchViewer),
+        With<NesColourPaletteSwatchViewer>,
+    >,
+    mut images: ResMut<Assets<Image>>,
 ) {
-    for (mut nes_emulator, nes_debug_ext) in query.iter_mut() {
-        for palette in 0..NUM_NES_COLOUR_PALETTES {
+    for mut nes_emulator in query.iter_mut() {
+        for (mut image_target, swatch_id) in viewer_query.iter_mut() {
+            let palette = swatch_id.0;
             // copy buffers need 256 bytes per row https://docs.rs/wgpu/latest/wgpu/constant.COPY_BYTES_PER_ROW_ALIGNMENT.html
-            let mut colour_palette_data = [0 as u8; NES_PALETTE_SWATCH_PIXEL_WIDTH * 4];
+            let mut colour_palette_data = vec![0; NES_PALETTE_SWATCH_PIXEL_WIDTH * 4];
             const INDIVIDUAL_COLOUR_PIXEL_COUNT: usize =
                 NES_PALETTE_SWATCH_PIXEL_WIDTH / NUM_COLOURS_IN_NES_PALETTE;
             nes_emulator.nes.fill_buffer_with_palette_colours(
@@ -866,24 +679,18 @@ fn nes_debugging_colour_palette_visualization(
                 },
             );
 
-            let colour_palette_image =
-                render_device.create_buffer_with_data(&BufferInitDescriptor {
-                    label: Some(format!("NES Colour Palette Swatch {}", palette).as_str()),
-                    contents: &colour_palette_data,
-                    usage: bevy::render::render_resource::BufferUsages::COPY_SRC,
-                });
-
-            screen_sender
-                .send((
-                    colour_palette_image,
-                    Extent3d {
-                        width: 64,
-                        height: 1,
-                        depth_or_array_layers: 1,
-                    },
-                    nes_debug_ext.colour_palette_visualization[palette].clone(),
-                ))
-                .unwrap();
+            let rgba_data = image::RgbaImage::from_raw(
+                NES_PALETTE_SWATCH_PIXEL_WIDTH as u32,
+                1,
+                colour_palette_data,
+            )
+            .unwrap();
+            let new_canvas = Image::from_dynamic(
+                DynamicImage::ImageRgba8(rgba_data),
+                true,
+                RenderAssetUsages::default(),
+            );
+            image_target.texture = images.add(new_canvas);
         }
     }
 }
@@ -891,11 +698,11 @@ fn nes_debugging_colour_palette_visualization(
 fn nes_debugging_colour_palette_swatch_highlight(
     mut nes_query: Query<(&mut NesDebugExtensions, &ActionState<NesDebuggingActions>)>,
     mut swatch_query: Query<
-        (&mut BackgroundColor, &ColourPaletteSwatchView),
-        With<ColourPaletteSwatchView>,
+        (&mut BackgroundColor, &NesColourPaletteSwatchViewer),
+        With<NesColourPaletteSwatchViewer>,
     >,
 ) {
-    const HIGHLIGH_COLOUR: Color = Color::linear_rgb(0.0, 1.0, 0.0);
+    const HIGHLIGHT_COLOUR: Color = Color::linear_rgb(0.0, 1.0, 0.0);
     for (mut nes_debugging, action_state) in nes_query.iter_mut() {
         match (
             action_state.just_pressed(&NesDebuggingActions::PrevColourPalette),
@@ -920,7 +727,7 @@ fn nes_debugging_colour_palette_swatch_highlight(
 
         for (mut background_color, swatch) in swatch_query.iter_mut() {
             background_color.0 = if swatch.0 == nes_debugging.selected_palette {
-                HIGHLIGH_COLOUR
+                HIGHLIGHT_COLOUR
             } else {
                 Color::NONE
             };
@@ -934,7 +741,7 @@ fn nes_debugging_memory_visualization(
         &mut NesDebugExtensions,
         &ActionState<NesDebuggingActions>,
     )>,
-    mut memory_text_target: Query<&mut Text, With<MemoryDebugView>>,
+    mut memory_text_target: Query<&mut Text, With<MemoryDebugViewer>>,
 ) {
     for ((mut nes_emulator, mut nes_debugging, debug_action_state), mut text_target) in
         nes_query.iter_mut().zip(memory_text_target.iter_mut())
@@ -977,7 +784,7 @@ fn nes_debugging_memory_visualization(
 
 fn nes_debugging_cpu_status_visualization(
     nes_query: Query<&NesEmulator>,
-    mut cpu_status_text_target: Query<&mut Text, With<CpuStatusDebugView>>,
+    mut cpu_status_text_target: Query<&mut Text, With<CpuStatusDebugViewer>>,
 ) {
     static GREEN: Color = Color::linear_rgb(0.0, 1.0, 0.0);
     static RED: Color = Color::linear_rgb(1.0, 0.0, 0.0);
