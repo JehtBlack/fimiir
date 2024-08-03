@@ -20,8 +20,8 @@ pub(crate) enum AddressingMode {
     AbsoluteX,
     AbsoluteY,
     Indirect,
-    IndirectX,
-    IndirectY,
+    IndexedIndirect,
+    IndirectIndexed,
 }
 
 impl CpuOpCode {
@@ -63,8 +63,8 @@ lazy_static! {
                     0x6D => (AddressingMode::Absolute, 4),
                     0x7D => (AddressingMode::AbsoluteX, 4),
                     0x79 => (AddressingMode::AbsoluteY, 4),
-                    0x61 => (AddressingMode::IndirectX, 6),
-                    0x71 => (AddressingMode::IndirectY, 5),
+                    0x61 => (AddressingMode::IndexedIndirect, 6),
+                    0x71 => (AddressingMode::IndirectIndexed, 5),
                     _ => unreachable!(),
                 },
                 Cpu::adc,
@@ -80,8 +80,8 @@ lazy_static! {
                     0x2D => (AddressingMode::Absolute, 4),
                     0x3D => (AddressingMode::AbsoluteX, 4),
                     0x39 => (AddressingMode::AbsoluteY, 4),
-                    0x21 => (AddressingMode::IndirectX, 6),
-                    0x31 => (AddressingMode::IndirectY, 5),
+                    0x21 => (AddressingMode::IndexedIndirect, 6),
+                    0x31 => (AddressingMode::IndirectIndexed, 5),
                     _ => unreachable!(),
                 },
                 Cpu::and,
@@ -161,8 +161,8 @@ lazy_static! {
                     0xCD => (AddressingMode::Absolute, 4),
                     0xDD => (AddressingMode::AbsoluteX, 4),
                     0xD9 => (AddressingMode::AbsoluteY, 4),
-                    0xC1 => (AddressingMode::IndirectX, 6),
-                    0xD1 => (AddressingMode::IndirectY, 5),
+                    0xC1 => (AddressingMode::IndexedIndirect, 6),
+                    0xD1 => (AddressingMode::IndirectIndexed, 5),
                     _ => unreachable!(),
                 },
                 Cpu::cmp,
@@ -221,8 +221,8 @@ lazy_static! {
                     0x4D => (AddressingMode::Absolute, 4),
                     0x5D => (AddressingMode::AbsoluteX, 4),
                     0x59 => (AddressingMode::AbsoluteY, 4),
-                    0x41 => (AddressingMode::IndirectX, 6),
-                    0x51 => (AddressingMode::IndirectY, 5),
+                    0x41 => (AddressingMode::IndexedIndirect, 6),
+                    0x51 => (AddressingMode::IndirectIndexed, 5),
                     _ => unreachable!(),
                 },
                 Cpu::eor,
@@ -271,8 +271,8 @@ lazy_static! {
                     0xAD => (AddressingMode::Absolute, 4),
                     0xBD => (AddressingMode::AbsoluteX, 4),
                     0xB9 => (AddressingMode::AbsoluteY, 4),
-                    0xA1 => (AddressingMode::IndirectX, 6),
-                    0xB1 => (AddressingMode::IndirectY, 5),
+                    0xA1 => (AddressingMode::IndexedIndirect, 6),
+                    0xB1 => (AddressingMode::IndirectIndexed, 5),
                     _ => unreachable!(),
                 },
                 Cpu::lda,
@@ -333,8 +333,8 @@ lazy_static! {
                     0x0D => (AddressingMode::Absolute, 4),
                     0x1D => (AddressingMode::AbsoluteX, 4),
                     0x19 => (AddressingMode::AbsoluteY, 4),
-                    0x01 => (AddressingMode::IndirectX, 6),
-                    0x11 => (AddressingMode::IndirectY, 5),
+                    0x01 => (AddressingMode::IndexedIndirect, 6),
+                    0x11 => (AddressingMode::IndirectIndexed, 5),
                     _ => unreachable!(),
                 },
                 Cpu::ora,
@@ -396,8 +396,8 @@ lazy_static! {
                     0xED => (AddressingMode::Absolute, 4),
                     0xFD => (AddressingMode::AbsoluteX, 4),
                     0xF9 => (AddressingMode::AbsoluteY, 4),
-                    0xE1 => (AddressingMode::IndirectX, 6),
-                    0xF1 => (AddressingMode::IndirectY, 5),
+                    0xE1 => (AddressingMode::IndexedIndirect, 6),
+                    0xF1 => (AddressingMode::IndirectIndexed, 5),
                     _ => unreachable!(),
                 },
                 Cpu::sbc,
@@ -421,8 +421,8 @@ lazy_static! {
                     0x8D => (AddressingMode::Absolute, 4),
                     0x9D => (AddressingMode::AbsoluteX, 5),
                     0x99 => (AddressingMode::AbsoluteY, 5),
-                    0x81 => (AddressingMode::IndirectX, 6),
-                    0x91 => (AddressingMode::IndirectY, 6),
+                    0x81 => (AddressingMode::IndexedIndirect, 6),
+                    0x91 => (AddressingMode::IndirectIndexed, 6),
                     _ => unreachable!(),
                 },
                 Cpu::sta,
@@ -584,7 +584,7 @@ impl AddressingMode {
                     additional_cycles_if_page_crossed: 0,
                 }
             }
-            AddressingMode::IndirectX => {
+            AddressingMode::IndexedIndirect => {
                 let zero_page_addr = cpu.read_byte(cpu.program_counter());
                 cpu.increment_program_counter(1);
                 let lo =
@@ -592,13 +592,12 @@ impl AddressingMode {
                 let hi =
                     cpu.read_byte(((zero_page_addr + cpu.register_x() + 1) & 0x00FF) as u16) as u16;
                 let indirect_address = (hi << 8) | lo;
-                let address = cpu.read_short(indirect_address);
                 ReadOperandResult::AbsoluteAddress {
-                    addr: address,
+                    addr: indirect_address,
                     additional_cycles_if_page_crossed: 0,
                 }
             }
-            AddressingMode::IndirectY => {
+            AddressingMode::IndirectIndexed => {
                 let zero_page_addr = cpu.read_byte(cpu.program_counter()) as u16;
                 cpu.increment_program_counter(1);
                 let lo = cpu.read_byte(zero_page_addr & 0x00FF) as u16;

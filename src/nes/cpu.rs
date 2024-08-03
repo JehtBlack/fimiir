@@ -228,12 +228,12 @@ impl Cpu {
                     let target = ((hi as u16) << 8) | lo as u16;
                     format!("(${:04X}) {{IND}}", target)
                 }
-                AddressingMode::IndirectX => {
+                AddressingMode::IndexedIndirect => {
                     let zero_page_addr = self.read_byte(addr);
                     addr = addr.wrapping_add(1);
                     format!("(${:02X}, X) {{IZX}}", zero_page_addr)
                 }
-                AddressingMode::IndirectY => {
+                AddressingMode::IndirectIndexed => {
                     let zero_page_addr = self.read_byte(addr);
                     addr = addr.wrapping_add(1);
                     format!("(${:02X}), Y {{IZY}}", zero_page_addr)
@@ -1104,8 +1104,124 @@ mod test {
     }
 
     #[test]
+    fn test_addressing_modes() {
+        let mut cpu = Cpu::default();
+        cpu.write_short(RESET_VECTOR, 0x0200);
+
+        cpu.reset();
+        cpu.a = 0x40;
+        let pc = cpu.program_counter();
+        let operand = AddressingMode::Accumulator.read_operand(&mut cpu);
+        assert!(matches!(operand, ReadOperandResult::AccumulatorValue(0x40)));
+        assert_eq!(cpu.program_counter(), pc);
+
+        cpu.reset();
+        let pc = cpu.program_counter();
+        let operand = AddressingMode::Immediate.read_operand(&mut cpu);
+        assert!(matches!(operand, ReadOperandResult::AbsoluteAddress { addr, .. } if addr == pc));
+        assert_eq!(cpu.program_counter(), pc + 1);
+
+        cpu.reset();
+        let pc = cpu.program_counter();
+        let operand = AddressingMode::ZeroPage.read_operand(&mut cpu);
+        assert!(
+            matches!(operand, ReadOperandResult::AbsoluteAddress { addr, .. } if addr == 0x0000 )
+        );
+        assert_eq!(cpu.program_counter(), pc + 1);
+
+        cpu.reset();
+        let pc = cpu.program_counter();
+        cpu.write_byte(cpu.program_counter(), 0x10);
+        cpu.x = 0x10;
+        let operand = AddressingMode::ZeroPageX.read_operand(&mut cpu);
+        assert!(
+            matches!(operand, ReadOperandResult::AbsoluteAddress { addr, .. } if addr == 0x0020 )
+        );
+        assert_eq!(cpu.program_counter(), pc + 1);
+
+        cpu.reset();
+        let pc = cpu.program_counter();
+        cpu.write_byte(cpu.program_counter(), 0x20);
+        cpu.y = 0x20;
+        let operand = AddressingMode::ZeroPageY.read_operand(&mut cpu);
+        assert!(
+            matches!(operand, ReadOperandResult::AbsoluteAddress { addr, .. } if addr == 0x0040 )
+        );
+        assert_eq!(cpu.program_counter(), pc + 1);
+
+        cpu.reset();
+        let pc = cpu.program_counter();
+        cpu.write_byte(cpu.program_counter(), 0x50);
+        let operand = AddressingMode::Relative.read_operand(&mut cpu);
+        assert!(matches!(operand, ReadOperandResult::RelativeAddress(0x50)));
+        assert_eq!(cpu.program_counter(), pc + 1);
+
+        cpu.reset();
+        let pc = cpu.program_counter();
+        cpu.write_short(cpu.program_counter(), 0xC0C0);
+        let operand = AddressingMode::Absolute.read_operand(&mut cpu);
+        assert!(
+            matches!(operand, ReadOperandResult::AbsoluteAddress { addr, .. } if addr == 0xC0C0 )
+        );
+        assert_eq!(cpu.program_counter(), pc + 2);
+
+        cpu.reset();
+        let pc = cpu.program_counter();
+        cpu.write_short(cpu.program_counter(), 0xC000);
+        cpu.x = 0xC0;
+        let operand = AddressingMode::AbsoluteX.read_operand(&mut cpu);
+        assert!(
+            matches!(operand, ReadOperandResult::AbsoluteAddress { addr, .. } if addr == 0xC0C0 )
+        );
+        assert_eq!(cpu.program_counter(), pc + 2);
+
+        cpu.reset();
+        let pc = cpu.program_counter();
+        cpu.write_short(cpu.program_counter(), 0xC000);
+        cpu.y = 0xC0;
+        let operand = AddressingMode::AbsoluteY.read_operand(&mut cpu);
+        assert!(
+            matches!(operand, ReadOperandResult::AbsoluteAddress { addr, .. } if addr == 0xC0C0 )
+        );
+        assert_eq!(cpu.program_counter(), pc + 2);
+
+        cpu.reset();
+        let pc = cpu.program_counter();
+        cpu.write_short(cpu.program_counter(), 0x0300);
+        cpu.write_short(0x0300, 0xC0C0);
+        let operand = AddressingMode::Indirect.read_operand(&mut cpu);
+        assert!(
+            matches!(operand, ReadOperandResult::AbsoluteAddress { addr, .. } if addr == 0xC0C0 )
+        );
+        assert_eq!(cpu.program_counter(), pc + 2);
+
+        cpu.reset();
+        let pc = cpu.program_counter();
+        cpu.write_byte(cpu.program_counter(), 0x20);
+        cpu.x = 0x10;
+        cpu.write_short(0x0030, 0xC0C0);
+        let operand = AddressingMode::IndexedIndirect.read_operand(&mut cpu);
+        assert!(
+            matches!(operand, ReadOperandResult::AbsoluteAddress { addr, .. } if addr == 0xC0C0 )
+        );
+        assert_eq!(cpu.program_counter(), pc + 1);
+
+        cpu.reset();
+        let pc = cpu.program_counter();
+        cpu.write_byte(cpu.program_counter(), 0x20);
+        cpu.write_short(0x20, 0xC000);
+        cpu.y = 0xC0;
+        let operand = AddressingMode::IndirectIndexed.read_operand(&mut cpu);
+        assert!(
+            matches!(operand, ReadOperandResult::AbsoluteAddress { addr, .. } if addr == 0xC0C0 )
+        );
+        assert_eq!(cpu.program_counter(), pc + 1);
+    }
+
+    #[test]
     fn test_adc() {
         let mut cpu = Cpu::default();
+        cpu.write_short(RESET_VECTOR, 0x0200);
         cpu.reset();
         for i in 0..10 {
             cpu.write_byte(cpu.program_counter() + i, 0x02)

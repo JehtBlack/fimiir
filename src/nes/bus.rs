@@ -153,25 +153,38 @@ use super::mappers::MirroringMode;
 
 #[cfg(test)]
 struct TestCartridge {
-    mem: [u8; 0xFF],
+    reset_addr: u16,
 }
 
 #[cfg(test)]
 impl TestCartridge {
     pub fn new() -> Self {
-        TestCartridge { mem: [0; 0xFF] }
+        TestCartridge { reset_addr: 0x0000 }
     }
 }
 
 #[cfg(test)]
 impl Mapper for TestCartridge {
     fn cpu_read_byte(&self, addr: u16) -> Option<u8> {
-        Some(self.mem[(addr & 0xFF) as usize])
+        match addr {
+            0xFFFC => Some((self.reset_addr & 0x00FF) as u8),
+            0xFFFD => Some((self.reset_addr >> 8) as u8),
+            _ => None,
+        }
     }
 
     fn cpu_write_byte(&mut self, addr: u16, data: u8) -> bool {
-        self.mem[(addr & 0xFF) as usize] = data;
-        true
+        match addr {
+            0xFFFC => {
+                self.reset_addr = (self.reset_addr & 0xFF00) | (data as u16);
+                true
+            }
+            0xFFFD => {
+                self.reset_addr = (self.reset_addr & 0x00FF) | ((data as u16) << 8);
+                true
+            }
+            _ => false,
+        }
     }
 
     fn ppu_read_byte(&self, _addr: u16) -> Option<u8> {
@@ -190,11 +203,10 @@ impl Mapper for TestCartridge {
 #[cfg(test)]
 impl Default for Bus {
     fn default() -> Self {
-        let cart_prg = Box::new(TestCartridge::new());
-        let cart_chr = Box::new(TestCartridge::new());
+        let cart = Box::new(TestCartridge::new());
         Bus {
             cpu_ram: [0; 2 * 1024],
-            ppu: Ppu::new(cart_chr),
+            ppu: Ppu::new(cart),
             dma_page: 0x00,
             dma_addr: 0x00,
             dma_data: 0x00,
