@@ -6,16 +6,23 @@ const RAM_END: u16 = 0x1FFF;
 const PPU_START: u16 = 0x2000;
 const PPU_END: u16 = 0x3FFF;
 
+#[allow(dead_code)]
 const APU_CHANNELS_START: u16 = 0x4000;
+#[allow(dead_code)]
 const APU_CHANNELS_END: u16 = 0x4013;
+#[allow(dead_code)]
 const APU_STATUS: u16 = 0x4015;
+#[allow(dead_code)]
 const APU_FRAME_COUNTER: u16 = 0x4017;
 
 const OAM_DMA: u16 = 0x4014;
 
+#[allow(dead_code)]
 const JOYPAD_POLL: u16 = 0x4016;
 
+#[allow(dead_code)]
 const JOYPAD1: u16 = 0x4016;
+#[allow(dead_code)]
 const JOYPAD2: u16 = 0x4017;
 
 pub(crate) struct Bus {
@@ -138,6 +145,7 @@ impl Bus {
         // the APU would be 3 ticks behind
         // To combat this we'll pretend the cycles are 3 ahead and use that to
         // determine if the APU should tick
+        #[allow(unused_variables)]
         let apu_should_tick = (cycle + cycles + 3) % 6 == 0;
 
         // APU High Frequency tick every PPU tick

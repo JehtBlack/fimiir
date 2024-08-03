@@ -67,6 +67,7 @@ struct Nes2_0header {
     default_expansion_device: u8,
 }
 
+#[allow(dead_code)]
 pub(crate) enum MirroringMode {
     Horizontal,
     Vertical,
@@ -84,6 +85,7 @@ where
     fn ppu_read_byte(&self, addr: u16) -> Option<u8>;
     fn ppu_write_byte(&mut self, addr: u16, data: u8) -> bool;
     fn mirroring_mode(&self) -> &MirroringMode;
+    #[allow(dead_code)]
     fn reset(&mut self) {}
     fn scanline(&mut self) {}
     fn irq_state(&self) -> bool {
@@ -127,6 +129,7 @@ pub fn load_cartridge(rom_data: &[u8]) -> Box<dyn Mapper> {
                     header.chr_rom_chunks.max(1) as usize * 0x2000,
                 )
             }
+            #[allow(unreachable_code)]
             NesFormat::Nes2_0 => {
                 todo!("NES 2.0 format is not fully supported yet");
                 let header = unsafe { rom_data.align_to::<Nes2_0header>().1.get_unchecked(0) };

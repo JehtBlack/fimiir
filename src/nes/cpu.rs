@@ -6,7 +6,9 @@ use super::{
     opcodes::{AddressingMode, ReadOperandResult, CPU_OP_CODES},
 };
 
+#[allow(dead_code)]
 const PRG_ROM_START: u16 = 0x8000;
+#[allow(dead_code)]
 const PRG_ROM_END: u16 = 0xFFFF;
 const STACK_START: u16 = 0x0100;
 const STACK_RESET: u8 = 0xFD;
@@ -128,10 +130,12 @@ impl Cpu {
         self.pc += amount;
     }
 
+    #[allow(dead_code)]
     pub fn cycles_remaining(&self) -> u8 {
         self.cycles
     }
 
+    #[allow(dead_code)]
     pub fn complete(&self) -> bool {
         self.cycles == 0
     }
@@ -361,6 +365,7 @@ impl Cpu {
         (hi << 8) | lo
     }
 
+    #[cfg(test)]
     pub fn write_short(&mut self, addr: u16, data: u16) {
         let lo = data as u8;
         let hi = (data >> 8) as u8;

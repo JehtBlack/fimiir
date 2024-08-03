@@ -558,6 +558,7 @@ impl Ppu {
         }
     }
 
+    #[allow(dead_code)]
     pub fn frame_complete(&mut self) -> bool {
         let frame_complete = self.frame_complete;
         self.frame_complete = false;
@@ -581,6 +582,7 @@ impl Ppu {
         }
     }
 
+    #[allow(dead_code)]
     fn read_oam(&self, addr: u8) -> u8 {
         let oam_addr = (addr & 0xFC) >> 2;
         match addr & 0x03 {
@@ -1098,19 +1100,6 @@ impl PpuColour {
         PpuColour {
             channels: [r, g, b],
         }
-    }
-}
-
-trait BitwiseReverse {
-    fn reverse_bits(self) -> Self;
-}
-
-impl BitwiseReverse for u8 {
-    fn reverse_bits(mut self) -> Self {
-        self = (self & 0xF0) >> 4 | (self & 0x0F) << 4;
-        self = (self & 0xCC) >> 2 | (self & 0x33) << 2;
-        self = (self & 0xAA) >> 1 | (self & 0x55) << 1;
-        self
     }
 }
 

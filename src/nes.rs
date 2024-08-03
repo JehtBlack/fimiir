@@ -7,6 +7,7 @@ mod ppu;
 pub const NES_SCREEN_WIDTH: usize = 256;
 pub const NES_SCREEN_HEIGHT: usize = 240;
 
+#[allow(dead_code)]
 pub const NUM_NES_PATTERN_TABLES: usize = 2;
 pub const NES_PATTERN_TABLE_WIDTH: usize = 128;
 pub const NES_PATTERN_TABLE_HEIGHT: usize = 128;

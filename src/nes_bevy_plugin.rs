@@ -1,6 +1,6 @@
 use crate::nes::{
     NES_PATTERN_TABLE_HEIGHT, NES_PATTERN_TABLE_WIDTH, NES_SCREEN_HEIGHT, NES_SCREEN_WIDTH,
-    NUM_COLOURS_IN_NES_PALETTE, NUM_NES_COLOUR_PALETTES, NUM_NES_PATTERN_TABLES,
+    NUM_COLOURS_IN_NES_PALETTE, NUM_NES_COLOUR_PALETTES,
 };
 
 use super::nes::Nes;
@@ -34,6 +34,7 @@ enum NesDebuggingActions {
 }
 
 #[derive(Debug, Default, States, Hash, Eq, PartialEq, Clone)]
+#[allow(dead_code)]
 enum EmulationState {
     #[default]
     Running,
@@ -117,6 +118,7 @@ struct EmulatorStateView;
 struct EmulatorFrameCounter;
 
 #[derive(Default)]
+#[allow(dead_code)]
 enum CodeOffset {
     #[default]
     Centered,
