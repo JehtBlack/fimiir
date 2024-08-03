@@ -428,7 +428,7 @@ impl Ppu {
                             // $0800..$0BFF = table 0
                             // $0C00..$0FFF = table 1
                             let name_table_section = addr & 0x0400;
-                            self.name_table[(addr & name_table_section & 0x03FF) as usize]
+                            self.name_table[(name_table_section + (addr & 0x03FF)) as usize]
                         }
                         &MirroringMode::Horizontal => {
                             // Horizontal Mirroring
@@ -437,7 +437,7 @@ impl Ppu {
                             // $0800..$0BFF = table 1
                             // $0C00..$0FFF = table 1
                             let name_table_section = (addr & 0x0800) >> 1;
-                            self.name_table[(addr & name_table_section & 0x03FF) as usize]
+                            self.name_table[(name_table_section + (addr & 0x03FF)) as usize]
                         }
                         _ => unimplemented!("Unsupported mirroring mode"),
                     }
@@ -473,7 +473,7 @@ impl Ppu {
                             // $0800..$0BFF = table 0
                             // $0C00..$0FFF = table 1
                             let name_table_section = addr & 0x0400;
-                            self.name_table[(addr & name_table_section & 0x03FF) as usize] = data;
+                            self.name_table[(name_table_section + (addr & 0x03FF)) as usize] = data;
                         }
                         &MirroringMode::Horizontal => {
                             // Horizontal Mirroring
@@ -482,7 +482,7 @@ impl Ppu {
                             // $0800..$0BFF = table 1
                             // $0C00..$0FFF = table 1
                             let name_table_section = (addr & 0x0800) >> 1;
-                            self.name_table[(addr & name_table_section & 0x03FF) as usize] = data;
+                            self.name_table[(name_table_section + (addr & 0x03FF)) as usize] = data;
                         }
                         _ => unimplemented!("Unsupported mirroring mode"),
                     }
