@@ -1,7 +1,5 @@
 use super::mappers::{Mapper, MirroringMode};
-use super::{
-    NES_SCREEN_HEIGHT, NES_SCREEN_WIDTH, NUM_COLOURS_IN_NES_PALETTE, NUM_NES_COLOUR_PALETTES,
-};
+use super::{NES_SCREEN_HEIGHT, NES_SCREEN_WIDTH, NUM_COLOURS_IN_NES_PALETTE};
 
 #[derive(Clone, Copy)]
 struct PpuColour {
@@ -36,13 +34,78 @@ bitflags! {
         const SLAVE_MODE            = 0b01000000;
         const ENABLE_NMI            = 0b10000000;
     }
+}
 
-    struct LoopyRegister: u16 {
-        const COARSE_X      = 0b00000000_00011111;
-        const COARSE_Y      = 0b00000011_11100000;
-        const NAMETABLE_X   = 0b00000100_00000000;
-        const NAMETABLE_Y   = 0b00001000_00000000;
-        const FINE_Y        = 0b01110000_00000000;
+enum LoopyRegisterComponents {
+    CoarseX,
+    CoarseY,
+    NametableX,
+    NametableY,
+    FineY,
+}
+
+#[derive(Clone, Copy)]
+struct LoopyRegister {
+    coarse_x: u16,
+    coarse_y: u16,
+    nametable_x: u16,
+    nametable_y: u16,
+    fine_y: u16,
+}
+
+impl LoopyRegister {
+    const COARSE_MASK: u16 = 0b00000000_00011111;
+    const NAMETABLE_MASK: u16 = 0b00000000_00000001;
+    const FINE_MASK: u16 = 0b00000000_00000111;
+
+    const COARSE_X_BIT_OFFSET: u16 = 0;
+    const COARSE_Y_BIT_OFFSET: u16 = 5;
+    const NAMETABLE_X_BIT_OFFSET: u16 = 10;
+    const NAMETABLE_Y_BIT_OFFSET: u16 = 11;
+    const FINE_Y_BIT_OFFSET: u16 = 12;
+
+    fn new() -> Self {
+        LoopyRegister {
+            coarse_x: 0,
+            coarse_y: 0,
+            nametable_x: 0,
+            nametable_y: 0,
+            fine_y: 0,
+        }
+    }
+
+    fn from_u16(value: u16) -> Self {
+        LoopyRegister {
+            coarse_x: (value >> Self::COARSE_X_BIT_OFFSET) & Self::COARSE_MASK,
+            coarse_y: (value >> Self::COARSE_Y_BIT_OFFSET) & Self::COARSE_MASK,
+            nametable_x: (value >> Self::NAMETABLE_X_BIT_OFFSET) & Self::NAMETABLE_MASK,
+            nametable_y: (value >> Self::NAMETABLE_Y_BIT_OFFSET) & Self::NAMETABLE_MASK,
+            fine_y: (value >> Self::FINE_Y_BIT_OFFSET) & Self::FINE_MASK,
+        }
+    }
+
+    fn as_u16(&self) -> u16 {
+        ((self.coarse_x & Self::COARSE_MASK) << Self::COARSE_X_BIT_OFFSET)
+            | ((self.coarse_y & Self::COARSE_MASK) << Self::COARSE_Y_BIT_OFFSET)
+            | ((self.nametable_x & Self::NAMETABLE_MASK) << Self::NAMETABLE_X_BIT_OFFSET)
+            | ((self.nametable_y & Self::NAMETABLE_MASK) << Self::NAMETABLE_Y_BIT_OFFSET)
+            | ((self.fine_y & Self::FINE_MASK) << Self::FINE_Y_BIT_OFFSET)
+    }
+
+    fn set(&mut self, component: LoopyRegisterComponents, value: u16) {
+        match component {
+            LoopyRegisterComponents::CoarseX => self.coarse_x = value,
+            LoopyRegisterComponents::CoarseY => self.coarse_y = value,
+            LoopyRegisterComponents::NametableX => self.nametable_x = value,
+            LoopyRegisterComponents::NametableY => self.nametable_y = value,
+            LoopyRegisterComponents::FineY => self.fine_y = value,
+        }
+    }
+}
+
+impl From<LoopyRegister> for u16 {
+    fn from(register: LoopyRegister) -> Self {
+        register.as_u16()
     }
 }
 
@@ -68,7 +131,7 @@ pub(crate) struct Ppu {
     status: PpuFlags,
     mask: PpuMask,
     control: PpuCtrl,
-    address_latch: u8,
+    address_latch: bool,
     ppu_data_buffer: u8,
 
     vram_addr: LoopyRegister,
@@ -186,10 +249,10 @@ impl Ppu {
             status: PpuFlags::empty(),
             mask: PpuMask::empty(),
             control: PpuCtrl::empty(),
-            address_latch: 0,
+            address_latch: false,
             ppu_data_buffer: 0,
-            vram_addr: LoopyRegister::empty(),
-            tram_addr: LoopyRegister::empty(),
+            vram_addr: LoopyRegister::new(),
+            tram_addr: LoopyRegister::new(),
             fine_x: 0,
             bg_next_tile_id: 0,
             bg_next_tile_attrib: 0,
@@ -228,7 +291,7 @@ impl Ppu {
 
     pub fn reset(&mut self) {
         self.fine_x = 0;
-        self.address_latch = 0;
+        self.address_latch = false;
         self.ppu_data_buffer = 0;
         self.scanline = -1;
         self.cycle = 0;
@@ -243,8 +306,8 @@ impl Ppu {
         self.status = PpuFlags::empty();
         self.mask = PpuMask::empty();
         self.control = PpuCtrl::empty();
-        self.vram_addr = LoopyRegister::empty();
-        self.tram_addr = LoopyRegister::empty();
+        self.vram_addr = LoopyRegister::new();
+        self.tram_addr = LoopyRegister::new();
         self.sprite_count_on_scanline = 0;
         self.frame_complete = false;
         self.nmi = false;
@@ -267,27 +330,30 @@ impl Ppu {
             0x0002 => {
                 let data = (self.status.bits() & 0xE0) | (self.ppu_data_buffer & 0x1F);
                 self.status.remove(PpuFlags::VBLANK);
-                self.address_latch = 0;
+                self.address_latch = false;
                 data
             }
             0x0004 => self.read_oam_unsafe(self.oam_addr),
             0x0007 => {
                 let data = self.ppu_data_buffer;
-                self.ppu_data_buffer = self.read_vram_byte(self.vram_addr.bits());
-                let old_vram_addr = self.vram_addr.bits();
-                self.vram_addr = LoopyRegister::from_bits_truncate(
-                    self.vram_addr.bits()
-                        + (if self.control.contains(PpuCtrl::INCREMENT_MODE) {
-                            32
-                        } else {
-                            1
-                        }),
-                );
-                if old_vram_addr >= 0x3F00 {
+                let vram_addr = self.vram_addr.as_u16();
+                self.ppu_data_buffer = self.read_vram_byte(vram_addr);
+
+                let data = if vram_addr >= 0x3F00 {
                     self.ppu_data_buffer
                 } else {
                     data
-                }
+                };
+
+                self.vram_addr = LoopyRegister::from_u16(
+                    vram_addr
+                        + if self.control.contains(PpuCtrl::INCREMENT_MODE) {
+                            32
+                        } else {
+                            1
+                        },
+                );
+                data
             }
             _ => 0,
         }
@@ -298,12 +364,12 @@ impl Ppu {
             0x0000 => {
                 self.control = PpuCtrl::from_bits_truncate(data);
                 self.tram_addr.set(
-                    LoopyRegister::NAMETABLE_X,
-                    self.control.contains(PpuCtrl::NAMETABLE_X),
+                    LoopyRegisterComponents::NametableX,
+                    self.control.contains(PpuCtrl::NAMETABLE_X) as u16,
                 );
                 self.tram_addr.set(
-                    LoopyRegister::NAMETABLE_Y,
-                    self.control.contains(PpuCtrl::NAMETABLE_Y),
+                    LoopyRegisterComponents::NametableY,
+                    self.control.contains(PpuCtrl::NAMETABLE_Y) as u16,
                 );
             }
             0x0001 => {
@@ -314,43 +380,36 @@ impl Ppu {
             }
             0x0004 => self.write_oam_unsafe(self.oam_addr, data),
             0x0005 => {
-                if self.address_latch == 0 {
+                if !self.address_latch {
                     self.fine_x = data & 0x07;
-
-                    // Coarse X
-                    self.tram_addr.insert(LoopyRegister::from_bits_truncate(
-                        ((data >> 3) as u16) & LoopyRegister::COARSE_X.bits(),
-                    ));
-                    self.address_latch = 1;
+                    self.tram_addr
+                        .set(LoopyRegisterComponents::CoarseX, (data >> 3) as u16);
+                    self.address_latch = true;
                 } else {
                     self.tram_addr
-                        .set(LoopyRegister::FINE_Y, (data & 0x07) != 0);
-
-                    // Coarse Y
-                    self.tram_addr.insert(LoopyRegister::from_bits_truncate(
-                        ((data as u16) << 2) & LoopyRegister::COARSE_Y.bits(),
-                    ));
-                    self.address_latch = 0;
+                        .set(LoopyRegisterComponents::FineY, (data & 0x07) as u16);
+                    self.tram_addr
+                        .set(LoopyRegisterComponents::CoarseY, (data >> 3) as u16);
+                    self.address_latch = false;
                 }
             }
             0x0006 => {
-                if self.address_latch == 0 {
-                    self.tram_addr = LoopyRegister::from_bits_truncate(
-                        (((data & 0x3F) as u16) << 8) | (self.tram_addr.bits() & 0x00FF),
+                if !self.address_latch {
+                    self.tram_addr = LoopyRegister::from_u16(
+                        (((data & 0x3F) as u16) << 8) | self.tram_addr.as_u16(),
                     );
-                    self.address_latch = 1;
+                    self.address_latch = true;
                 } else {
-                    self.tram_addr = LoopyRegister::from_bits_truncate(
-                        (self.tram_addr.bits() & 0xFF00) | (data as u16),
-                    );
-                    self.vram_addr = LoopyRegister::from_bits_truncate(self.tram_addr.bits());
-                    self.address_latch = 0;
+                    self.tram_addr =
+                        LoopyRegister::from_u16((self.tram_addr.as_u16() & 0xFF00) | data as u16);
+                    self.vram_addr = self.tram_addr;
+                    self.address_latch = false;
                 }
             }
             0x0007 => {
-                self.write_vram_byte(self.vram_addr.bits(), data);
-                self.vram_addr = LoopyRegister::from_bits_truncate(
-                    self.vram_addr.bits()
+                self.write_vram_byte(self.vram_addr.as_u16(), data);
+                self.vram_addr = LoopyRegister::from_u16(
+                    self.vram_addr.as_u16()
                         + if self.control.contains(PpuCtrl::INCREMENT_MODE) {
                             32
                         } else {
@@ -618,42 +677,24 @@ impl Ppu {
                             match (self.cycle - 1) % 8 {
                                 0 => {
                                     self.load_background_shift_registers();
-                                    self.bg_next_tile_id = self
-                                        .read_vram_byte(0x2000 | (self.vram_addr.bits() & 0x0FFF));
+                                    self.bg_next_tile_id = self.read_vram_byte(
+                                        0x2000 | (self.vram_addr.as_u16() & 0x0FFF),
+                                    );
                                 }
                                 2 => {
-                                    // move nametable Y value to bit 11
-                                    let nametable_y_bit = (self.vram_addr.bits()
-                                        & LoopyRegister::NAMETABLE_Y.bits())
-                                        << 10;
-                                    // move nametable X value to bit 10
-                                    let nametable_x_bit = (self.vram_addr.bits()
-                                        & LoopyRegister::NAMETABLE_X.bits())
-                                        << 10;
-                                    // mask out lower two bits of coarse Y and shift right 3 bits to combine with processed coarse X
-                                    let coarse_y_bits = ((self.vram_addr.bits()
-                                        & LoopyRegister::COARSE_Y.bits())
-                                        & 0x01C0)
-                                        >> 3;
-                                    // mask off the lower 2 bits and ready for combining with shifted and masked coarse Y
-                                    let coarse_x_bits = (self.vram_addr.bits()
-                                        & LoopyRegister::COARSE_X.bits())
-                                        >> 2;
                                     self.bg_next_tile_attrib = self.read_vram_byte(
                                         0x23C0
-                                            | nametable_y_bit
-                                            | nametable_x_bit
-                                            | coarse_y_bits
-                                            | coarse_x_bits,
+                                            | (self.vram_addr.nametable_y << 11)
+                                            | (self.vram_addr.nametable_x << 10)
+                                            | ((self.vram_addr.coarse_y & 0x001C) << 1)
+                                            | (self.vram_addr.coarse_x >> 2),
                                     );
 
-                                    // check bit 1 of coarse Y
-                                    if self.vram_addr.bits() & 0x0040 != 0 {
+                                    if self.vram_addr.coarse_y & 0x02 != 0 {
                                         self.bg_next_tile_attrib >>= 4;
                                     }
 
-                                    // check bit 1 of coarse X
-                                    if self.vram_addr.bits() & 0x0002 != 0 {
+                                    if self.vram_addr.coarse_x & 0x02 != 0 {
                                         self.bg_next_tile_attrib >>= 2;
                                     }
 
@@ -695,26 +736,14 @@ impl Ppu {
                                     if self.mask.contains(PpuMask::SHOW_BACKGROUND)
                                         || self.mask.contains(PpuMask::SHOW_SPRITES)
                                     {
-                                        if (self.vram_addr.bits() & LoopyRegister::COARSE_X.bits())
-                                            == 31
-                                        {
-                                            // reset coarse x to 0 as incrementing would cause it to overflow
-                                            // and switch horizontal nametable
-                                            self.vram_addr = LoopyRegister::from_bits_truncate(
-                                                self.vram_addr.bits()
-                                                    & !LoopyRegister::COARSE_X.bits(),
-                                            );
-                                            self.vram_addr.toggle(LoopyRegister::NAMETABLE_X);
+                                        // reset coarse x to 0 as incrementing would cause it to overflow
+                                        // and switch horizontal nametable
+                                        if self.vram_addr.coarse_x == 31 {
+                                            self.vram_addr.coarse_x = 0;
+                                            self.vram_addr.nametable_x =
+                                                !self.vram_addr.nametable_x;
                                         } else {
-                                            // increment coarse x by 1
-                                            let coarse_x = (self.vram_addr.bits()
-                                                & LoopyRegister::COARSE_X.bits())
-                                                + 1;
-                                            self.vram_addr = LoopyRegister::from_bits_truncate(
-                                                (self.vram_addr.bits()
-                                                    & !LoopyRegister::COARSE_X.bits())
-                                                    | coarse_x,
-                                            );
+                                            self.vram_addr.coarse_x += 1;
                                         }
                                     }
                                 }
@@ -726,43 +755,25 @@ impl Ppu {
                                 if self.mask.contains(PpuMask::SHOW_BACKGROUND)
                                     || self.mask.contains(PpuMask::SHOW_SPRITES)
                                 {
-                                    if (self.vram_addr.bits() & LoopyRegister::FINE_Y.bits())
-                                        == 0x7000
-                                    {
-                                        // reset fine y to 0 as incrementing would cause it to overflow
-                                        self.vram_addr = LoopyRegister::from_bits_truncate(
-                                            self.vram_addr.bits() & !LoopyRegister::FINE_Y.bits(),
-                                        );
-                                        let mut coarse_y = (self.vram_addr.bits()
-                                            & LoopyRegister::COARSE_Y.bits())
-                                            >> 5;
-                                        if coarse_y == 29 {
+                                    if self.vram_addr.fine_y < 7 {
+                                        self.vram_addr.fine_y += 1;
+                                    } else {
+                                        self.vram_addr.fine_y = 0;
+
+                                        if self.vram_addr.coarse_y == 29 {
                                             // the coarse y standard behaviour overflows at 29 causing a wrap around
                                             // and name table switch
-                                            coarse_y = 0;
-                                            self.vram_addr.toggle(LoopyRegister::NAMETABLE_Y);
-                                        } else if coarse_y == 31 {
+                                            self.vram_addr.coarse_y = 0;
+                                            self.vram_addr.nametable_y =
+                                                !self.vram_addr.nametable_y;
+                                        } else if self.vram_addr.coarse_y == 31 {
                                             // looks pointless but the coarse y in the tram register can be written
                                             // to by the CPU and then transferred to vram register so we have to handle
                                             // the possibility of a "true" overflow
-                                            coarse_y = 0;
+                                            self.vram_addr.coarse_y = 0;
                                         } else {
-                                            coarse_y += 1;
+                                            self.vram_addr.coarse_y += 1;
                                         }
-                                        self.vram_addr = LoopyRegister::from_bits_truncate(
-                                            (self.vram_addr.bits()
-                                                & !LoopyRegister::COARSE_Y.bits())
-                                                | (coarse_y << 5),
-                                        );
-                                    } else {
-                                        // increment fine y by 1
-                                        let fine_y = (self.vram_addr.bits()
-                                            & LoopyRegister::FINE_Y.bits())
-                                            + 0x1000;
-                                        self.vram_addr = LoopyRegister::from_bits_truncate(
-                                            (self.vram_addr.bits() & !LoopyRegister::FINE_Y.bits())
-                                                | fine_y,
-                                        );
                                     }
                                 }
                             } else if self.cycle == 257 {
@@ -770,15 +781,8 @@ impl Ppu {
                                 if self.mask.contains(PpuMask::SHOW_BACKGROUND)
                                     || self.mask.contains(PpuMask::SHOW_SPRITES)
                                 {
-                                    self.vram_addr = LoopyRegister::from_bits_truncate(
-                                        (self.vram_addr.bits() & !LoopyRegister::COARSE_X.bits())
-                                            | (self.tram_addr.bits()
-                                                & LoopyRegister::COARSE_X.bits()),
-                                    );
-                                    self.vram_addr.set(
-                                        LoopyRegister::NAMETABLE_X,
-                                        self.tram_addr.contains(LoopyRegister::NAMETABLE_X),
-                                    );
+                                    self.vram_addr.nametable_x = self.tram_addr.nametable_x;
+                                    self.vram_addr.coarse_x = self.tram_addr.coarse_x;
                                 }
 
                                 // foreground
@@ -825,22 +829,14 @@ impl Ppu {
                             if self.mask.contains(PpuMask::SHOW_BACKGROUND)
                                 || self.mask.contains(PpuMask::SHOW_SPRITES)
                             {
-                                self.vram_addr = LoopyRegister::from_bits_truncate(
-                                    (self.vram_addr.bits()
-                                        & !(LoopyRegister::COARSE_Y.bits()
-                                            | LoopyRegister::FINE_Y.bits()))
-                                        | (self.tram_addr.bits() & LoopyRegister::COARSE_Y.bits())
-                                        | (self.tram_addr.bits() & LoopyRegister::FINE_Y.bits()),
-                                );
-                                self.vram_addr.set(
-                                    LoopyRegister::NAMETABLE_Y,
-                                    self.tram_addr.contains(LoopyRegister::NAMETABLE_Y),
-                                );
+                                self.vram_addr.nametable_y = self.tram_addr.nametable_y;
+                                self.vram_addr.coarse_y = self.tram_addr.coarse_y;
+                                self.vram_addr.fine_y = self.tram_addr.fine_y;
                             }
                         }
                         338 | 340 => {
                             self.bg_next_tile_id =
-                                self.read_vram_byte(0x2000 | (self.vram_addr.bits() & 0x0FFF));
+                                self.read_vram_byte(0x2000 | (self.vram_addr.as_u16() & 0x0FFF));
 
                             if self.cycle == 340 {
                                 for i in 0..(self.sprite_count_on_scanline as usize) {
