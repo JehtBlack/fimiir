@@ -24,15 +24,69 @@ bitflags! {
         const BLUE_EMPHASIS         = 0b10000000;
     }
 
-    struct PpuCtrl: u8 {
-        const NAMETABLE_X           = 0b00000001;
-        const NAMETABLE_Y           = 0b00000010;
-        const INCREMENT_MODE        = 0b00000100;
-        const PATTERN_SPRITE        = 0b00001000;
-        const PATTERN_BACKGROUND    = 0b00010000;
-        const SPRITE_SIZE           = 0b00100000;
-        const SLAVE_MODE            = 0b01000000;
-        const ENABLE_NMI            = 0b10000000;
+}
+
+#[allow(dead_code)]
+enum PpuCtrlComponents {
+    NametableX,
+    NametableY,
+    IncrementMode,
+    PatternSprite,
+    PatternBackground,
+    SpriteSize,
+    SlaveMode,
+    EnableNmi,
+}
+
+struct PpuCtrl {
+    nametable_x: u8,
+    nametable_y: u8,
+    increment_mode: u8,
+    pattern_sprite: u8,
+    pattern_background: u8,
+    sprite_size: u8,
+    slave_mode: u8,
+    enable_nmi: u8,
+}
+
+impl PpuCtrl {
+    fn new() -> Self {
+        PpuCtrl {
+            nametable_x: 0,
+            nametable_y: 0,
+            increment_mode: 0,
+            pattern_sprite: 0,
+            pattern_background: 0,
+            sprite_size: 0,
+            slave_mode: 0,
+            enable_nmi: 0,
+        }
+    }
+
+    fn from_u8(value: u8) -> Self {
+        PpuCtrl {
+            nametable_x: value & 0x01,
+            nametable_y: (value >> 1) & 0x01,
+            increment_mode: (value >> 2) & 0x01,
+            pattern_sprite: (value >> 3) & 0x01,
+            pattern_background: (value >> 4) & 0x01,
+            sprite_size: (value >> 5) & 0x01,
+            slave_mode: (value >> 6) & 0x01,
+            enable_nmi: (value >> 7) & 0x01,
+        }
+    }
+
+    fn contains(&self, component: PpuCtrlComponents) -> bool {
+        match component {
+            PpuCtrlComponents::NametableX => self.nametable_x == 1,
+            PpuCtrlComponents::NametableY => self.nametable_y == 1,
+            PpuCtrlComponents::IncrementMode => self.increment_mode == 1,
+            PpuCtrlComponents::PatternSprite => self.pattern_sprite == 1,
+            PpuCtrlComponents::PatternBackground => self.pattern_background == 1,
+            PpuCtrlComponents::SpriteSize => self.sprite_size == 1,
+            PpuCtrlComponents::SlaveMode => self.slave_mode == 1,
+            PpuCtrlComponents::EnableNmi => self.enable_nmi == 1,
+        }
     }
 }
 
@@ -248,7 +302,7 @@ impl Ppu {
             nmi: false,
             status: PpuFlags::empty(),
             mask: PpuMask::empty(),
-            control: PpuCtrl::empty(),
+            control: PpuCtrl::new(),
             address_latch: false,
             ppu_data_buffer: 0,
             vram_addr: LoopyRegister::new(),
@@ -305,7 +359,7 @@ impl Ppu {
         self.bg_shifter_attrib_hi = 0;
         self.status = PpuFlags::empty();
         self.mask = PpuMask::empty();
-        self.control = PpuCtrl::empty();
+        self.control = PpuCtrl::new();
         self.vram_addr = LoopyRegister::new();
         self.tram_addr = LoopyRegister::new();
         self.sprite_count_on_scanline = 0;
@@ -333,7 +387,7 @@ impl Ppu {
                 self.address_latch = false;
                 data
             }
-            0x0004 => self.read_oam_unsafe(self.oam_addr),
+            0x0004 => self.read_oam(self.oam_addr),
             0x0007 => {
                 let data = self.ppu_data_buffer;
                 let vram_addr = self.vram_addr.as_u16();
@@ -347,7 +401,7 @@ impl Ppu {
 
                 self.vram_addr = LoopyRegister::from_u16(
                     vram_addr
-                        + if self.control.contains(PpuCtrl::INCREMENT_MODE) {
+                        + if self.control.contains(PpuCtrlComponents::IncrementMode) {
                             32
                         } else {
                             1
@@ -362,14 +416,14 @@ impl Ppu {
     pub fn write_byte(&mut self, addr: u16, data: u8) {
         match addr {
             0x0000 => {
-                self.control = PpuCtrl::from_bits_truncate(data);
+                self.control = PpuCtrl::from_u8(data);
                 self.tram_addr.set(
                     LoopyRegisterComponents::NametableX,
-                    self.control.contains(PpuCtrl::NAMETABLE_X) as u16,
+                    self.control.contains(PpuCtrlComponents::NametableX) as u16,
                 );
                 self.tram_addr.set(
                     LoopyRegisterComponents::NametableY,
-                    self.control.contains(PpuCtrl::NAMETABLE_Y) as u16,
+                    self.control.contains(PpuCtrlComponents::NametableY) as u16,
                 );
             }
             0x0001 => {
@@ -378,7 +432,7 @@ impl Ppu {
             0x0003 => {
                 self.oam_addr = data;
             }
-            0x0004 => self.write_oam_unsafe(self.oam_addr, data),
+            0x0004 => self.write_oam(self.oam_addr, data),
             0x0005 => {
                 if !self.address_latch {
                     self.fine_x = data & 0x07;
@@ -410,7 +464,7 @@ impl Ppu {
                 self.write_vram_byte(self.vram_addr.as_u16(), data);
                 self.vram_addr = LoopyRegister::from_u16(
                     self.vram_addr.as_u16()
-                        + if self.control.contains(PpuCtrl::INCREMENT_MODE) {
+                        + if self.control.contains(PpuCtrlComponents::IncrementMode) {
                             32
                         } else {
                             1
@@ -582,7 +636,6 @@ impl Ppu {
         }
     }
 
-    #[allow(dead_code)]
     fn read_oam(&self, addr: u8) -> u8 {
         let oam_addr = (addr & 0xFC) >> 2;
         match addr & 0x03 {
@@ -592,16 +645,6 @@ impl Ppu {
             3 => self.object_attribute_memory[oam_addr as usize].x,
             _ => unreachable!(),
         }
-    }
-
-    pub fn write_oam_unsafe(&mut self, addr: u8, data: u8) {
-        unsafe {
-            *(self.object_attribute_memory.as_mut_ptr() as *mut u8).offset(addr as isize) = data;
-        }
-    }
-
-    fn read_oam_unsafe(&self, addr: u8) -> u8 {
-        unsafe { *(self.object_attribute_memory.as_ptr() as *const u8).offset(addr as isize) }
     }
 
     fn load_background_shift_registers(&mut self) {
@@ -707,10 +750,11 @@ impl Ppu {
                                     // move pattern background bit of control register to bit 13 of the address
                                     // add the next tile id (shifted 4 bits left) to the address and finally
                                     // add the fine X scroll value
-                                    let bg_pattern_table_addr = ((self.control.bits()
-                                        & PpuCtrl::PATTERN_BACKGROUND.bits())
+                                    let bg_pattern_table_addr = (self
+                                        .control
+                                        .contains(PpuCtrlComponents::PatternBackground)
                                         as u16)
-                                        << 8;
+                                        << 12;
                                     let bg_pattern_table_addr = bg_pattern_table_addr
                                         + ((self.bg_next_tile_id as u16) << 4)
                                         + self.fine_x as u16;
@@ -722,10 +766,11 @@ impl Ppu {
                                     // move pattern background bit of control register to bit 13 of the address
                                     // add the next tile id (shifted 4 bits left) to the address, add the fine X scroll value
                                     // and finally add an offset for the high byte
-                                    let bg_pattern_table_addr = ((self.control.bits()
-                                        & PpuCtrl::PATTERN_BACKGROUND.bits())
+                                    let bg_pattern_table_addr = (self
+                                        .control
+                                        .contains(PpuCtrlComponents::PatternBackground)
                                         as u16)
-                                        << 8;
+                                        << 12;
                                     let bg_pattern_table_addr = bg_pattern_table_addr
                                         + ((self.bg_next_tile_id as u16) << 4)
                                         + self.fine_x as u16
@@ -779,6 +824,7 @@ impl Ppu {
                                     }
                                 }
                             } else if self.cycle == 257 {
+                                self.load_background_shift_registers();
                                 // transfer x tram addresses to vram addresses
                                 if self.mask.contains(PpuMask::SHOW_BACKGROUND)
                                     || self.mask.contains(PpuMask::SHOW_SPRITES)
@@ -798,7 +844,8 @@ impl Ppu {
                                         let diff = self.scanline as i16
                                             - self.object_attribute_memory[oam_entry].y as i16;
                                         let sprite_size =
-                                            if self.control.contains(PpuCtrl::SPRITE_SIZE) {
+                                            if self.control.contains(PpuCtrlComponents::SpriteSize)
+                                            {
                                                 16
                                             } else {
                                                 8
@@ -844,13 +891,14 @@ impl Ppu {
                                 for i in 0..(self.sprite_count_on_scanline as usize) {
                                     let sprite_pattern_addr = if !self
                                         .control
-                                        .contains(PpuCtrl::SPRITE_SIZE)
+                                        .contains(PpuCtrlComponents::SpriteSize)
                                     {
                                         // 8x8 mode
-                                        let partial_addr = (((self.control.bits()
-                                            & PpuCtrl::PATTERN_SPRITE.bits())
+                                        let partial_addr = ((self
+                                            .control
+                                            .contains(PpuCtrlComponents::PatternSprite)
                                             as u16)
-                                            << 9)
+                                            << 12)
                                             | ((self.sprites_on_scanline[i].id as u16) << 4);
                                         let sprite_position =
                                             self.scanline - self.sprites_on_scanline[i].y as i16;
@@ -867,10 +915,9 @@ impl Ppu {
                                             ((self.sprites_on_scanline[i].id & 0x01) as u16) << 12;
                                         let sprite_id_part =
                                             (self.sprites_on_scanline[i].id & 0xFE) as u16;
-                                        let sprite_position_part = ((self.scanline
+                                        let sprite_position_part = (self.scanline
                                             - self.sprites_on_scanline[i].y as i16)
-                                            as u16)
-                                            & 0x07;
+                                            as u16;
                                         // 8x16 mode
                                         let (sprite_id_part, sprite_position_part) =
                                             if self.sprites_on_scanline[i].attribute & 0x80 == 0 {
@@ -899,7 +946,9 @@ impl Ppu {
                                                 }
                                             };
 
-                                        partial_addr | (sprite_id_part << 4) | sprite_position_part
+                                        partial_addr
+                                            | (sprite_id_part << 4)
+                                            | (sprite_position_part & 0x07)
                                     };
 
                                     let sprite_pattern_bits_lo =
@@ -929,7 +978,7 @@ impl Ppu {
                 240 => {} // post-render scanline, no operation
                 241 if self.cycle == 1 => {
                     self.status.insert(PpuFlags::VBLANK);
-                    if self.control.contains(PpuCtrl::ENABLE_NMI) {
+                    if self.control.contains(PpuCtrlComponents::EnableNmi) {
                         self.nmi = true;
                         self.num_cycles_to_complete_this_tick = 0; // exit early for system to check for NMI
                     }
@@ -979,47 +1028,43 @@ impl Ppu {
                 (0x00, 0x00, false)
             };
 
-            let (pixel, palette) = if bg_pixel == 0 && fg_pixel == 0 {
-                // both background and foreground are transparent
-                (0x00, 0x00)
-            } else if bg_pixel == 0 && fg_pixel != 0 {
-                // background is transparent, foreground is not
-                (fg_pixel, fg_palette)
-            } else if bg_pixel != 0 && fg_pixel == 0 {
-                // background is not transparent, foreground is
-                (bg_pixel, bg_palette)
-            } else {
-                // sprite zero hit detection
-                // the hit must be possible, determined earlier
-                // sprite 0 must be being rendered, determined earlier
-                // the background and foreground must both be enabled as the collision would be between the two
-                if self.sprite_zero_hit_possible
-                    && self.sprite_zero_being_rendered
-                    && self.mask.contains(PpuMask::SHOW_BACKGROUND)
-                    && self.mask.contains(PpuMask::SHOW_SPRITES)
-                {
-                    // check if rendering to the left of the screen is enabled (either background or foreground)
-                    let cycle_lower_bound = if self.mask.contains(PpuMask::SHOW_BACKGROUND_LEFT)
-                        || self.mask.contains(PpuMask::SHOW_SPRITES_LEFT)
+            let (pixel, palette) = match (bg_pixel, fg_pixel) {
+                (0, 0) => (0x00, 0x00),
+                (0, _) => (fg_pixel, fg_palette),
+                (_, 0) => (bg_pixel, bg_palette),
+                _ => {
+                    // sprite zero hit detection
+                    // the hit must be possible, determined earlier
+                    // sprite 0 must be being rendered, determined earlier
+                    // the background and foreground must both be enabled as the collision would be between the two
+                    if self.sprite_zero_hit_possible
+                        && self.sprite_zero_being_rendered
+                        && self.mask.contains(PpuMask::SHOW_BACKGROUND)
+                        && self.mask.contains(PpuMask::SHOW_SPRITES)
                     {
-                        1
-                    } else {
-                        9
-                    };
+                        // check if rendering to the left of the screen is enabled (either background or foreground)
+                        let cycle_lower_bound = if self.mask.contains(PpuMask::SHOW_BACKGROUND_LEFT)
+                            || self.mask.contains(PpuMask::SHOW_SPRITES_LEFT)
+                        {
+                            1
+                        } else {
+                            9
+                        };
 
-                    // check the sprite is being rendered within the valid range of the screen
-                    if self.cycle >= cycle_lower_bound && self.cycle < 258 {
-                        // hit!
-                        self.status.insert(PpuFlags::SPRITE_ZERO_HIT);
+                        // check the sprite is being rendered within the valid range of the screen
+                        if self.cycle >= cycle_lower_bound && self.cycle < 258 {
+                            // hit!
+                            self.status.insert(PpuFlags::SPRITE_ZERO_HIT);
+                        }
                     }
-                }
 
-                // both background and foreground are not transparent
-                if fg_priority {
-                    // foreground has priority over background
-                    (fg_pixel, fg_palette)
-                } else {
-                    (bg_pixel, bg_palette)
+                    // both background and foreground are not transparent
+                    if fg_priority {
+                        // foreground has priority over background
+                        (fg_pixel, fg_palette)
+                    } else {
+                        (bg_pixel, bg_palette)
+                    }
                 }
             };
 
